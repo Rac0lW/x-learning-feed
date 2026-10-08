@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.output/
+.wxt/
+.test-dist/
+.data/
+notes/*
+!notes/example.md
+.DS_Store
+.env
+.env.*
+*.log

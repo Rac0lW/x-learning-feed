@@ -1,0 +1,18 @@
+<header><span class="mark" aria-hidden="true">✦</span><div><h1>X Learning Feed</h1><p>把浏览时间，留一点给学习。</p></div></header>
+<section><form id="settings">
+  <label class="row"><span>在 X 首页显示笔记</span><input id="enabled" type="checkbox" role="switch"></label>
+  <label class="row"><span>插入频率</span><span>每 <input id="every" type="number" min="1" max="100" value="10" required aria-label="每隔多少条推文插入笔记"> 条推文</span></label>
+  <label class="row"><span>笔记漫游</span><input id="roam" type="checkbox" role="switch"></label>
+  <p class="hint">开启后随机浏览整个笔记库；关闭后只读 #x-feed 文章。</p>
+</form></section>
+<section><div class="section-title"><h2>来自 Obsidian</h2><span id="note-count" class="badge">—</span></div>
+  <p class="hint">给文章加 <code>#x-feed</code>，它就会出现在信息流中。</p><ul id="notes"></ul>
+</section>
+<section id="issues" hidden><h2>有修改尚未保存</h2><p class="hint">Obsidian 中的数据有变化。你的修改保留在下面，可以查看后按最新数据重新编辑。</p><ul id="pending"></ul></section>
+<footer><p id="sync-info" role="status">正在读取…</p><p class="hint">点“已复习”即自动保存。Obsidian 关闭时先记在本地，打开后自动写回。</p>
+<details id="connection"><summary>连接设置</summary><form id="bridge">
+  <label>端口<input id="port" type="number" min="1" max="65535" value="43127" required></label>
+  <label>连接令牌<input id="token" type="password" autocomplete="off" pattern="[a-f0-9]{64}" required></label>
+  <p class="hint">在 Obsidian → 设置 → X Learning Feed 中复制令牌。</p>
+  <div class="buttons"><button type="submit">连接 Obsidian</button><button id="disconnect" type="button" class="secondary">断开</button></div>
+</form></details><p id="status" role="status" aria-live="polite"></p></footer>

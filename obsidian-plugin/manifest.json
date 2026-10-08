@@ -1,0 +1,9 @@
+{
+  "id": "x-learning-feed",
+  "name": "X Learning Feed",
+  "version": "0.3.0",
+  "minAppVersion": "1.5.0",
+  "description": "将带 #x-feed 的笔记同步到 X 信息流，并接收复习元数据。",
+  "author": "X Learning Feed",
+  "isDesktopOnly": true
+}

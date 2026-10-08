@@ -1,0 +1,47 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { JSDOM } from 'jsdom';
+
+test('网页内面板：设置自动保存，无导入或同步按钮，离线与失败状态明确',async t=>{
+  const manifest=JSON.parse(await readFile('.output/chrome-mv3/manifest.json','utf8'));
+  assert.equal(manifest.action.default_popup,undefined);
+  assert.ok(manifest.web_accessible_resources.some(rule=>rule.resources.includes('panel.html') && rule.matches.includes('https://x.com/*')));
+  const html=await readFile('.output/chrome-mv3/panel.html','utf8');
+  const dom=new JSDOM(html,{url:'https://extension.invalid/panel.html',runScripts:'dangerously'});
+  t.after(()=>dom.window.close());const w=dom.window;
+  const storage={token:'b'.repeat(64),port:43127,syncStatus:'已同步',lastSync:new Date().toISOString()};
+  let feed={notes:[{id:'a'.repeat(64),title:'文章 <script>unsafe</script>',metadata:{reviewCount:2}}],settings:{every:10,enabled:true},pending:[]};
+  const sent=[];let changed;
+  w.browser={runtime:{id:'test',sendMessage:async message=>{
+    sent.push(message);
+    if(message.type==='feed')return feed;
+    if(message.type==='settings')feed={...feed,settings:message.settings};
+    if(message.type==='discard')feed={...feed,pending:[]};
+    return{ok:true};
+  }},storage:{local:{get:async keys=>Object.fromEntries(keys.map(key=>[key,storage[key]]))},onChanged:{addListener:fn=>{changed=fn;}}}};
+  const script=html.match(/src="([^"]+\.js)"/)[1];
+  w.eval(await readFile(`.output/chrome-mv3${script}`,'utf8'));
+  const flush=()=>new Promise(resolve=>setTimeout(resolve,10));await flush();
+  assert.equal(w.document.querySelector('input[type=file]'),null);
+  assert.equal(w.document.getElementById('retry'),null);
+  assert.equal(w.document.getElementById('connection').open,false);
+  assert.equal(w.document.getElementById('issues').hidden,true);
+  assert.ok(w.document.getElementById('notes').textContent.includes('<script>unsafe</script>'));
+  assert.equal(w.document.querySelector('main script'),null);
+  assert.equal(sent.filter(message=>message.type==='sync').length,1,'Opening the popup checks Obsidian automatically');
+  const every=w.document.getElementById('every');every.value='5';every.dispatchEvent(new w.Event('change',{bubbles:true}));await flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.find(message=>message.type==='settings').settings)),{every:5,enabled:true,roam:false});
+  const roam=w.document.getElementById('roam');roam.checked=true;roam.dispatchEvent(new w.Event('change',{bubbles:true}));await flush();
+  assert.equal(sent.filter(message=>message.type==='settings').at(-1).settings.roam,true);
+  storage.syncStatus='待同步：offline';feed={...feed,pending:[{id:'op',noteId:'a'.repeat(64),status:'pending'}]};
+  changed({version:{}},'local');await flush();
+  assert.ok(w.document.getElementById('sync-info').textContent.includes('1 条记录已存本地'));
+  assert.equal(w.document.getElementById('issues').hidden,true,'Offline queue does not need conflict controls');
+  feed={...feed,pending:[{...feed.pending[0],status:'conflict',error:'Obsidian 已修改'}]};
+  changed({version:{}},'local');await flush();
+  assert.equal(w.document.getElementById('issues').hidden,false);
+  w.document.querySelector('#pending button').click();await flush();
+  assert.ok(sent.some(message=>message.type==='discard' && message.id==='op'));
+  assert.equal(w.document.getElementById('issues').hidden,true);
+});
