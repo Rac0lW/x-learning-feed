@@ -41,7 +41,7 @@ async function refresh() {
     li.append(title,reason);
     if(item.metadata){const draft=document.createElement('p');draft.textContent=`你的修改：${item.metadata.reviewCount} 次；时间 ${item.metadata.lastReviewed?new Date(item.metadata.lastReviewed).toLocaleString():'无'}；备注 ${item.metadata.remarks||'无'}`;li.append(draft);}
     const discard=document.createElement('button');discard.type='button';discard.className='secondary';discard.textContent='保留 Obsidian 当前数据';
-    discard.addEventListener('click',async()=>{try{await send({type:'discard',id:item.id});await refresh();status('已保留 Obsidian 中的数据。需要调整时，可在卡片里重新编辑。');}catch(error){status((error as Error).message);}});
+    discard.addEventListener('click',async()=>{try{await send({type:'discard',id:item.id});await refresh();status('已保留 Obsidian 中的数据。需要调整时，请在 Obsidian 中修改属性。');}catch(error){status((error as Error).message);}});
     li.append(discard);return li;
   }));
   const state=await browser.storage.local.get(['token','syncStatus','lastSync']);

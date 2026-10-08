@@ -35,13 +35,11 @@ test('每 10 条插入、重复扫描幂等、重绘恢复、节点复用和关�
   timeline.reconcile(); assert.equal(anchors().length,0);
 });
 
-test('跳过后重绘不恢复；离开首页清理；频率可设为 2',() => {
+test('离开首页清理；频率可设为 2',() => {
   const main = document.querySelector('main'); main.replaceChildren(...[1,2,3,4].map(cell));
   const timeline = new Timeline(document);
   timeline.update({notes:[note('a'),note('b')],settings:{every:2,enabled:true}});
   timeline.reconcile(); assert.equal(document.querySelectorAll('x-learning-card').length,2);
-  timeline.skipped.add('2'); timeline.reconcile();
-  assert.equal(document.querySelectorAll('x-learning-card').length,1);
   dom.reconfigure({url:'https://x.com/user'}); timeline.reconcile();
   assert.equal(document.querySelectorAll('x-learning-card').length,0);
   dom.reconfigure({url:'https://x.com/home'});

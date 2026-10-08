@@ -25,24 +25,23 @@ test('构建后的 Content Script：无限滚动、事件操作、重绘、关�
   const frame = () => new Promise(resolve => setTimeout(resolve,50)); await frame();
   const cards = () => [...w.document.querySelectorAll('x-learning-card')];
   assert.deepEqual(cards().map(c => c.dataset.anchor),['10','20']);
-  const root = roots.get(cards()[0]); const [toggle,skip] = root.querySelectorAll('button');
+  const root = roots.get(cards()[0]); const [toggle] = root.querySelectorAll('button');
   toggle.click(); assert.equal(toggle.getAttribute('aria-expanded'),'true');
   toggle.click(); assert.equal(toggle.getAttribute('aria-expanded'),'false');
-  skip.click(); await frame(); assert.deepEqual(cards().map(c => c.dataset.anchor),['20']);
   assert.equal(w.attacked,undefined); assert.equal(root.querySelectorAll('script,img').length,0);
   main.append(...Array.from({length:30},(_,i) => cell(i+21))); await frame();
-  assert.deepEqual(cards().map(c => c.dataset.anchor),['20','30']);
+  assert.deepEqual(cards().map(c => c.dataset.anchor),['10','20','30']);
   main.replaceChildren(...Array.from({length:50},(_,i) => cell(i+1))); await frame();
-  assert.deepEqual(cards().map(c => c.dataset.anchor),['20','30']);
+  assert.deepEqual(cards().map(c => c.dataset.anchor),['10','20','30']);
   const before = callbacks; await frame(); assert.equal(callbacks,before);
   assert.ok(callbacks < 10,`observer callbacks: ${callbacks}`);
   feed = {...feed,settings:{every:10,enabled:false}}; refresh(); await frame(); assert.equal(cards().length,0);
-  feed = {...feed,settings:{every:10,enabled:true}}; refresh(); await frame(); assert.equal(cards().length,2);
+  feed = {...feed,settings:{every:10,enabled:true}}; refresh(); await frame(); assert.equal(cards().length,3);
   delete w.chrome.runtime.id; refresh(); await frame(); assert.equal(cards().length,0);
   assert.deepEqual(errors,[]);
 });
 
-test('构建后的卡片：只发送复习元数据、保留时间精度与重绘中的草稿',async t=>{
+test('构建后的卡片：仅保留展开与复习，复习写回与重绘正常',async t=>{
   const dom=new JSDOM('<main data-testid="primaryColumn"><div data-testid="cellInnerDiv"><article data-testid="tweet"><a href="/u/status/1"><time>今天</time></a></article></div></main>',{url:'https://x.com/home',runScripts:'dangerously',pretendToBeVisual:true});
   t.after(()=>dom.window.close());const w=dom.window;let refresh;const sent=[];
   w.setInterval=callback=>{refresh=callback;return 1;};w.clearInterval=()=>{};
@@ -55,13 +54,14 @@ test('构建后的卡片：只发送复习元数据、保留时间精度与重�
   const root=()=>roots.get(w.document.querySelector('x-learning-card'));
   [...root().querySelectorAll('button')].find(b=>b.textContent==='已复习 +1').click();await frame();
   assert.equal(sent[0].type,'review');assert.equal(sent[0].noteId,'a'.repeat(64));assert.equal(sent[0].metadata,undefined);
-  [...root().querySelectorAll('button')].find(b=>b.textContent==='修改复习信息').click();
-  const textarea=root().querySelector('textarea');textarea.value='正在编辑的草稿';textarea.dispatchEvent(new w.Event('input',{bubbles:true}));
+  assert.deepEqual([...root().querySelectorAll('button')].map(b=>b.textContent),['展开','已复习 +1']);
+  assert.equal(root().querySelector('form,input,textarea'),null);
+  root().querySelector('button').click();
   feed={...feed,notes:[{...feed.notes[0],metadata:{...feed.notes[0].metadata,reviewCount:3,version:'d'.repeat(64)}}],version:'two'};
-  refresh();await frame();assert.equal(root().querySelector('textarea').value,'正在编辑的草稿');
-  root().querySelector('form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await frame();
-  assert.equal(sent[1].type,'metadata');assert.equal(sent[1].metadata.remarks,'正在编辑的草稿');
-  assert.equal(sent[1].metadata.version,'c'.repeat(64)); // Retain the editing base so the plugin can report a conflict.
-  assert.equal(sent[1].metadata.lastReviewed,'2026-10-07T09:20:33.123Z');
-  assert.ok(!('html' in sent[1]) && !('body' in sent[1]));
+  refresh();await frame();
+  assert.ok(root().querySelector('.summary').textContent.includes('已复习 3 次'));
+  assert.equal(root().querySelector('button').textContent,'收起');
+  assert.deepEqual([...root().querySelectorAll('button')].map(b=>b.textContent),['收起','已复习 +1']);
+  assert.equal(sent.length,1);
+  assert.ok(!('html' in sent[0]) && !('body' in sent[0]));
 });
