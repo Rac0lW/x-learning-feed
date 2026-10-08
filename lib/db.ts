@@ -51,7 +51,7 @@ export async function savePending(operation:Pending) {
   const database=await db();
   return new Promise<void>((resolve,reject)=>{const tx=database.transaction('outbox','readwrite');tx.objectStore('outbox').put(operation);tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);});
 }
-export async function acknowledge(id:string,note?:Note) {
+export async function acknowledge(id:string,note?:Note,removeNoteId?:string) {
   const database=await db();
-  return new Promise<void>((resolve,reject)=>{const tx=database.transaction(['outbox','notes'],'readwrite');const store=tx.objectStore('outbox');const lookup=store.index('id').getKey(id);lookup.onsuccess=()=>{if(lookup.result!==undefined)store.delete(lookup.result);};if(note)tx.objectStore('notes').put(note);tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);});
+  return new Promise<void>((resolve,reject)=>{const tx=database.transaction(['outbox','notes'],'readwrite');const store=tx.objectStore('outbox');const lookup=store.index('id').getKey(id);lookup.onsuccess=()=>{if(lookup.result!==undefined)store.delete(lookup.result);};if(removeNoteId)tx.objectStore('notes').delete(removeNoteId);if(note)tx.objectStore('notes').put(note);tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);});
 }

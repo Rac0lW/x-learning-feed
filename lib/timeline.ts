@@ -8,7 +8,7 @@ export class Timeline {
   expanded = new Set<string>();
   private versions=new WeakMap<HTMLElement,string>();
   feed: Feed = { notes:[], settings:{every:10,enabled:true} };
-  constructor(private document: Document, private change?:(type:'review',noteId:string)=>Promise<{error?:string}>) {}
+  constructor(private document: Document, private change?:(type:'review'|'archive',noteId:string)=>Promise<{error?:string}>) {}
   clear() { this.document.querySelectorAll('x-learning-card').forEach(n => n.remove()); }
   update(feed: Feed) {
     const modeChanged=!!feed.settings.roam!==!!this.feed.settings.roam;
@@ -83,14 +83,19 @@ export class Timeline {
       const waiting=this.feed.pending?.filter(op=>op.noteId===note.id)??[];
       progress.textContent=waiting.length ? waiting.some(op=>op.status!=='pending')?'Obsidian 中的数据已变化，点扩展图标查看这次修改。':'已记在本地，将自动保存到 Obsidian。' : '';
       const review=this.document.createElement('button');review.type='button';review.className='review';review.textContent='已复习 +1';
-      const submit=async()=>{
-        review.disabled=true;
-        try{const response=await this.change!('review',note.id);progress.textContent=response.error??'已记录，正在自动保存…';}
+      const archive=this.document.createElement('button');archive.type='button';archive.textContent='归档';archive.title='添加 #no-x-feed，在所有模式中排除这篇文章';
+      const submit=async(type:'review'|'archive')=>{
+        review.disabled=true;archive.disabled=true;
+        try{
+          const response=await this.change!(type,note.id);progress.textContent=response.error??'已记录，正在自动保存…';
+          if(type==='archive' && !response.error){this.assignments.delete(anchor);host.remove();}
+        }
         catch(error){progress.textContent=(error as Error).message;}
-        finally{review.disabled=false;}
+        finally{review.disabled=false;archive.disabled=false;}
       };
-      review.addEventListener('click',()=>{void submit();});
-      footer.append(review);section.append(summary,progress);
+      review.addEventListener('click',()=>{void submit('review');});
+      archive.addEventListener('click',()=>{void submit('archive');});
+      footer.append(review,archive);section.append(summary,progress);
     }
     section.prepend(label,title,body);section.append(footer);shadow.append(style,section);
     return host;

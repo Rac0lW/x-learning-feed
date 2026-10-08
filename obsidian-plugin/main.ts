@@ -2,7 +2,7 @@ import { Plugin, PluginSettingTab, Setting, Notice, TFile, getAllTags } from 'ob
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { render } from '../src/render';
-import { BridgeError, operationSchema, splitNote, eligible, ensureIdentity, readMetadata, applyOperation } from './core';
+import { BridgeError, operationSchema, splitNote, hasTag, excluded, ensureIdentity, readMetadata, applyOperation } from './core';
 import type { Note } from '../lib/types';
 
 type Config = {token:string;source:string;port:number};
@@ -32,7 +32,7 @@ export default class XLearningFeed extends Plugin {
   private serialized<T>(task:()=>Promise<T>):Promise<T> {
     const next=this.work.then(task);this.work=next.catch(()=>{});return next;
   }
-  private async feed(roam=false) {
+  private async feed(roam=false,archiveId?:string) {
     const notes:Note[]=[];const files=new Map<string,TFile>();
     const vaultFiles=this.app.vault.getMarkdownFiles();
     const paths=new Set(vaultFiles.map(file=>file.path));
@@ -47,18 +47,21 @@ export default class XLearningFeed extends Plugin {
       for(let i=0;i<missing.length;i+=20)await Promise.all(missing.slice(i,i+20).map(async file=>{contents.set(file.path,await this.app.vault.read(file));}));
     }
     for (const file of vaultFiles) {
-      const cache=this.app.metadataCache.getFileCache(file);
-      if (!roam && !(cache && getAllTags(cache)?.includes('#x-feed'))) continue;
-      if (file.stat.size>2*1024*1024) {if(roam)continue;throw new BridgeError(422,`带标签文章超过 2 MiB：${file.basename}`);}
       const cached=this.cache.get(file.path);
-      if(cached && cached.mtime===file.stat.mtime && cached.size===file.stat.size && (roam || eligible(cached.content))){
+      const cache=this.app.metadataCache.getFileCache(file);
+      // A just-written note can temporarily disappear from Obsidian's tag index.
+      if (!roam && !(archiveId && cached?.note.id===archiveId) && !(cache && getAllTags(cache)?.includes('#x-feed'))) continue;
+      if (file.stat.size>2*1024*1024) {if(roam)continue;throw new BridgeError(422,`带标签文章超过 2 MiB：${file.basename}`);}
+      const fresh=cached && cached.mtime===file.stat.mtime && cached.size===file.stat.size;
+      if(fresh && !archiveId && excluded(cached.content))continue;
+      if(fresh && (roam || hasTag(cached.content,'x-feed'))){
         if(files.has(cached.note.id))throw new BridgeError(409,`两篇笔记的 xfeed_id 相同：${file.basename}`);
         files.set(cached.note.id,file);notes.push({...cached.note,...(roam?{roam:true}:{})});continue;
       }
       let content=contents.get(file.path)??await this.app.vault.read(file);
-      if (!roam && !eligible(content)) continue;
+      if (!archiveId && excluded(content) || !roam && !hasTag(content,'x-feed')) continue;
       if (!roam && !splitNote(content).frontmatter.xfeed_id) content=await this.app.vault.process(file,data => ensureIdentity(data,randomBytes(32).toString('hex')));
-      if (!roam && !eligible(content)) continue;
+      if (!archiveId && excluded(content) || !roam && !hasTag(content,'x-feed')) continue;
       const {frontmatter,body}=splitNote(content);
       // Roaming is read-only until the user actually records a review.
       const id=frontmatter.xfeed_id??createHash('sha256').update(`${this.settings.source}:${file.path}`).digest('hex');
@@ -83,17 +86,18 @@ export default class XLearningFeed extends Plugin {
       const chunks:Buffer[]=[];let bytes=0;
       for await (const chunk of req) {bytes+=chunk.length;if(bytes>32768)throw new BridgeError(413,'元数据请求过大');chunks.push(chunk);}
       let input:unknown;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new BridgeError(400,'JSON 格式错误');}
-      const parsed=operationSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'仅允许复习次数、时间与备注；请求格式错误');
+      const parsed=operationSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'仅允许复习记录和归档；请求格式错误');
       const operation=parsed.data;
       if (operation.source!==this.settings.source) throw new BridgeError(409,'连接的笔记库已变化，请重新连接');
       const note=await this.serialized(async () => {
-        await this.feed(operation.roam===true);
+        await this.feed(operation.roam===true,operation.type==='archive'?operation.noteId:undefined);
         const file=this.files.get(operation.noteId);if(!file)throw new BridgeError(409,'文章已移除标签或删除，请放弃这条待同步操作');
         const content=await this.app.vault.process(file,data => applyOperation(ensureIdentity(data,operation.noteId,operation.roam===true),operation));
-        this.cache.delete(file.path);
+        if(operation.type!=='archive')this.cache.delete(file.path);
+        if(operation.type==='archive')return undefined;
         return {id:operation.noteId,title:file.basename.slice(0,200),html:render(splitNote(content).body,'markdown'),source:this.settings.source,path:file.path,metadata:readMetadata(splitNote(content).frontmatter),...(operation.roam?{roam:true}:{})};
       });
-      send(200,{note});
+      send(200,note?{note}:{archived:operation.noteId});
     } catch(error) {send(error instanceof BridgeError ? error.status : 500,{error:error instanceof BridgeError ? error.message : '同步失败，请检查 Obsidian 笔记属性或插件日志'});if(!(error instanceof BridgeError))console.error('X Learning Feed:',error);}
   }
 }

@@ -38,11 +38,15 @@ export default defineBackground(() => {
           if(item.status!=='pending')continue;
           if(item.source!==feed.source){await savePending({...item,status:'conflict',error:'笔记库已变化，请放弃旧操作'});changed=true;continue;}
           const {status,error,sequence,...operation}=item;
-          const write=await fetch(`${url}/metadata`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(operation),signal:AbortSignal.timeout(10000)});
+          const write=await fetch(`${url}/metadata`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(operation),signal:AbortSignal.timeout(item.roam?60000:10000)});
           const reply=await write.json();
           if(!write.ok){
             if(write.status>=500)throw new Error(reply.error??'Obsidian 暂时无法写回');
             await savePending({...item,status:write.status===409?'conflict':'failed',error:reply.error??'写回被拒绝'});changed=true;continue;
+          }
+          if(item.type==='archive'){
+            if(reply.archived!==item.noteId)throw new Error('归档响应格式错误');
+            await acknowledge(item.id,undefined,item.noteId);changed=true;continue;
           }
           if(!validNote(reply.note) || reply.note.id!==item.noteId || reply.note.source!==feed.source)throw new Error('写回响应格式错误');
           await acknowledge(item.id,reply.note);changed=true;
@@ -71,6 +75,7 @@ export default defineBackground(() => {
     const base={id:crypto.randomUUID(),noteId:note.id,source:note.source,...(note.roam?{roam:true}:{})};
     let operation:Operation;
     if(message.type==='review')operation={...base,type:'review',reviewedAt:new Date().toISOString()};
+    else if(message.type==='archive')operation={...base,type:'archive'};
     else{
       if(!validMetadata(message.metadata))throw new Error('复习次数、时间或备注格式错误');
       if((await pending()).some(op=>op.noteId===note.id))throw new Error('上次修改还未写回，请稍候；若 Obsidian 已关闭，打开后会自动保存');
@@ -101,9 +106,10 @@ export default defineBackground(() => {
         if(message.type==='feed'){
           const {settings,version=0,peer}=await browser.storage.local.get(['settings','version','peer']);
           if(message.version===version)return{unchanged:true,version};
-          return{notes:(await readNotes()).filter(n=>(peer ? n.source===peer : !n.source) && !!n.roam===!!(settings as Settings|undefined)?.roam),settings:settings??{every:10,enabled:true},version,pending:await pending()};
+          const outbox=await pending();const archived=new Set(outbox.filter(op=>op.type==='archive').map(op=>op.noteId));
+          return{notes:(await readNotes()).filter(n=>!archived.has(n.id) && (peer ? n.source===peer : !n.source) && !!n.roam===!!(settings as Settings|undefined)?.roam),settings:settings??{every:10,enabled:true},version,pending:outbox};
         }
-        if(message.type==='review' || message.type==='metadata'){
+        if(message.type==='review' || message.type==='metadata' || message.type==='archive'){
           const next=queuing.then(()=>queue(message,sender));queuing=next.catch(()=>{});return await next;
         }
         if(!sender.url?.startsWith(browser.runtime.getURL('/')))throw new Error('只允许设置页面修改数据');

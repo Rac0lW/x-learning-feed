@@ -10,6 +10,7 @@ const metadata = z.object({ reviewCount: z.number().int().min(0).max(Number.MAX_
 export const operationSchema = z.discriminatedUnion('type',[
   z.object({id:z.string().uuid(),source:hex,noteId:hex,type:z.literal('review'),reviewedAt:timestamp,roam:z.boolean().optional()}).strict(),
   z.object({id:z.string().uuid(),source:hex,noteId:hex,type:z.literal('metadata'),expectedVersion:hex,metadata,roam:z.boolean().optional()}).strict(),
+  z.object({id:z.string().uuid(),source:hex,noteId:hex,type:z.literal('archive'),roam:z.boolean().optional()}).strict(),
 ]);
 export class BridgeError extends Error {
   constructor(public status:number,message:string) {super(message);}
@@ -20,16 +21,19 @@ export function splitNote(content:string) {
   if (typeof frontmatter !== 'object' || Array.isArray(frontmatter)) throw new BridgeError(422,'笔记属性格式错误');
   return {frontmatter:frontmatter as Record<string,unknown>,body:content.slice(info.contentStart)};
 }
-export function eligible(content:string) {
+export function hasTag(content:string,tag:'x-feed'|'no-x-feed') {
   const {frontmatter,body} = splitNote(content);
   const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags : typeof frontmatter.tags === 'string' ? frontmatter.tags.split(/[\s,]+/) : [];
-  if (tags.some(tag => String(tag).replace(/^#/,'') === 'x-feed')) return true;
+  if (tags.some(value => String(value).replace(/^#/,'') === tag)) return true;
+  if(!body.includes(`#${tag}`))return false;
   let found = false;
   marked.walkTokens(marked.lexer(body), token => {
-    if (token.type === 'text' && /(^|[\s(])#x-feed(?![\w/\-])/u.test(token.text)) found = true;
+    if (token.type === 'text' && new RegExp(`(^|[\\s(])#${tag}(?![\\w/\\-])`,'u').test(token.text)) found = true;
   });
   return found;
 }
+export function excluded(content:string){return content.includes('no-x-feed') && hasTag(content,'no-x-feed');}
+export function eligible(content:string){return !excluded(content) && hasTag(content,'x-feed');}
 export function readMetadata(fm:Record<string,unknown>):Metadata {
   const last = fm.xfeed_last_reviewed instanceof Date ? fm.xfeed_last_reviewed.toISOString() : fm.xfeed_last_reviewed ?? null;
   const parsed = metadata.safeParse({reviewCount:fm.xfeed_review_count ?? 0,lastReviewed:last,remarks:fm.xfeed_remarks ?? ''});
@@ -57,6 +61,14 @@ export function applyOperation(content:string,operation:Operation) {
   const applied = frontmatter.xfeed_applied_ops ?? [];
   if (!Array.isArray(applied) || !applied.every(id => typeof id === 'string')) throw new BridgeError(422,'复习操作记录格式错误');
   if (applied.includes(op.id)) return content;
+  if(op.type==='archive'){
+    const tags=Array.isArray(frontmatter.tags)?frontmatter.tags:typeof frontmatter.tags==='string'?frontmatter.tags.split(/[\s,]+/).filter(Boolean):frontmatter.tags==null?[]:null;
+    if(!tags || !tags.every(tag=>typeof tag==='string'))throw new BridgeError(422,'笔记 tags 属性格式错误，无法归档');
+    frontmatter.tags=tags.some(tag=>tag.replace(/^#/,'')==='no-x-feed')?tags:[...tags,'no-x-feed'];
+    frontmatter.xfeed_applied_ops=[...applied,op.id];
+    return withProperties(frontmatter,body);
+  }
+  if(excluded(content))throw new BridgeError(409,'文章已归档，不再写入复习记录');
   if (!op.roam && !eligible(content)) throw new BridgeError(409,'文章已移除 #x-feed，请放弃这条待同步操作');
   const current = readMetadata(frontmatter);
   if (op.type === 'metadata' && op.expectedVersion !== current.version) throw new BridgeError(409,'元数据已在另一端修改，请重新读取后编辑');

@@ -41,12 +41,13 @@ test('构建后的 Content Script：无限滚动、事件操作、重绘、关�
   assert.deepEqual(errors,[]);
 });
 
-test('构建后的卡片：仅保留展开与复习，复习写回与重绘正常',async t=>{
+test('构建后的卡片：展开、复习与归档，写回失败可重试，归档立即移除',async t=>{
   const dom=new JSDOM('<main data-testid="primaryColumn"><div data-testid="cellInnerDiv"><article data-testid="tweet"><a href="/u/status/1"><time>今天</time></a></article></div></main>',{url:'https://x.com/home',runScripts:'dangerously',pretendToBeVisual:true});
   t.after(()=>dom.window.close());const w=dom.window;let refresh;const sent=[];
   w.setInterval=callback=>{refresh=callback;return 1;};w.clearInterval=()=>{};
   let feed={notes:[{id:'a'.repeat(64),source:'b'.repeat(64),title:'Obsidian 文章',html:'<p>正文</p>',metadata:{reviewCount:2,lastReviewed:'2026-10-07T09:20:33.123Z',remarks:'原备注',version:'c'.repeat(64)}}],settings:{every:1,enabled:true},version:'one'};
-  w.chrome={runtime:{id:'test',onMessage:{addListener:()=>{},removeListener:()=>{}},getURL:path=>`chrome-extension://test${path}`,sendMessage:async message=>{if(message.type==='feed')return feed;sent.push(message);return{ok:true,pending:true};}}};
+  let failArchive=true;
+  w.chrome={runtime:{id:'test',onMessage:{addListener:()=>{},removeListener:()=>{}},getURL:path=>`chrome-extension://test${path}`,sendMessage:async message=>{if(message.type==='feed')return feed;sent.push(message);if(message.type==='archive' && failArchive){failArchive=false;return{error:'未连接，请重试'};}return{ok:true,pending:true};}}};
   const roots=new WeakMap();const attach=w.Element.prototype.attachShadow;
   w.Element.prototype.attachShadow=function(options){const root=attach.call(this,options);roots.set(this,root);return root;};
   w.eval(await readFile('.output/chrome-mv3/content-scripts/feed.js','utf8'));
@@ -54,14 +55,20 @@ test('构建后的卡片：仅保留展开与复习，复习写回与重绘正�
   const root=()=>roots.get(w.document.querySelector('x-learning-card'));
   [...root().querySelectorAll('button')].find(b=>b.textContent==='已复习 +1').click();await frame();
   assert.equal(sent[0].type,'review');assert.equal(sent[0].noteId,'a'.repeat(64));assert.equal(sent[0].metadata,undefined);
-  assert.deepEqual([...root().querySelectorAll('button')].map(b=>b.textContent),['展开','已复习 +1']);
+  assert.deepEqual([...root().querySelectorAll('button')].map(b=>b.textContent),['展开','已复习 +1','归档']);
   assert.equal(root().querySelector('form,input,textarea'),null);
   root().querySelector('button').click();
   feed={...feed,notes:[{...feed.notes[0],metadata:{...feed.notes[0].metadata,reviewCount:3,version:'d'.repeat(64)}}],version:'two'};
   refresh();await frame();
   assert.ok(root().querySelector('.summary').textContent.includes('已复习 3 次'));
   assert.equal(root().querySelector('button').textContent,'收起');
-  assert.deepEqual([...root().querySelectorAll('button')].map(b=>b.textContent),['收起','已复习 +1']);
+  assert.deepEqual([...root().querySelectorAll('button')].map(b=>b.textContent),['收起','已复习 +1','归档']);
   assert.equal(sent.length,1);
   assert.ok(!('html' in sent[0]) && !('body' in sent[0]));
+  const archive=()=>[...root().querySelectorAll('button')].find(b=>b.textContent==='归档');
+  archive().click();await frame();assert.ok(root());assert.equal(archive().disabled,false);
+  assert.ok(root().querySelector('[role=status]').textContent.includes('未连接'));
+  archive().click();await frame();assert.equal(w.document.querySelector('x-learning-card'),null);
+  assert.equal(sent[2].type,'archive');assert.equal(sent[2].noteId,'a'.repeat(64));
+  refresh();await frame();assert.equal(w.document.querySelector('x-learning-card'),null);
 });
