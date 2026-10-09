@@ -4,6 +4,7 @@ import { marked } from 'marked';
 import { z } from 'zod';
 import type { Metadata, Operation } from '../lib/types';
 import { reviewMetadata } from '../lib/review';
+import { t, type Key, type Locale } from '../lib/i18n';
 
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const timestamp = z.string().datetime({offset:true});
@@ -17,13 +18,15 @@ export const operationSchema = z.discriminatedUnion('type',[
   z.object({id:z.string().uuid(),source:hex,noteId:hex,type:z.literal('edit'),expectedVersion:hex,markdown:z.string().max(2*1024*1024),roam:z.boolean().optional()}).strict(),
   z.object({id:z.string().uuid(),source:hex,noteId:hex,type:z.literal('archive'),roam:z.boolean().optional()}).strict(),
 ]);
+// Errors carry a message key so each response can use the language the browser asked for.
 export class BridgeError extends Error {
-  constructor(public status:number,message:string) {super(message);}
+  constructor(public status:number,public key:Key,public params:Record<string,string|number>={}) {super(t(key,params));}
+  translate(locale:Locale) {return t(this.key,this.params,locale);}
 }
 export function splitNote(content:string) {
   const info = getFrontMatterInfo(content);
   const frontmatter = info.exists ? parseYaml(info.frontmatter) ?? {} : {};
-  if (typeof frontmatter !== 'object' || Array.isArray(frontmatter)) throw new BridgeError(422,'笔记属性格式错误');
+  if (typeof frontmatter !== 'object' || Array.isArray(frontmatter)) throw new BridgeError(422,'ob.badProperties');
   return {frontmatter:frontmatter as Record<string,unknown>,body:content.slice(info.contentStart)};
 }
 export function hasTag(content:string,tag:string) {
@@ -57,7 +60,7 @@ export function readMetadata(fm:Record<string,unknown>):Metadata {
   const last = fm.xfeed_last_reviewed instanceof Date ? fm.xfeed_last_reviewed.toISOString() : fm.xfeed_last_reviewed ?? null;
   const due=fm.xfeed_next_review instanceof Date?fm.xfeed_next_review.toISOString():fm.xfeed_next_review;
   const parsed = metadata.safeParse({reviewCount:fm.xfeed_review_count ?? 0,lastReviewed:last,remarks:fm.xfeed_remarks ?? '',...(fm.xfeed_rating!==undefined?{rating:fm.xfeed_rating}:{}),...(fm.xfeed_interval_days!==undefined?{intervalDays:fm.xfeed_interval_days}:{}),...(due!==undefined?{nextReview:due}:{})});
-  if(!parsed.success)throw new BridgeError(422,'复习次数、时间或备注格式错误，请在 Obsidian 属性区修正');
+  if(!parsed.success)throw new BridgeError(422,'ob.badMetadata');
   const value=parsed.data;
   return {...value,version:createHash('sha256').update(JSON.stringify(value)).digest('hex')};
 }
@@ -68,7 +71,7 @@ export function ensureIdentity(content:string,id:string,roam=false) {
   if (!roam && !eligible(content)) return content;
   const {frontmatter,body} = splitNote(content);
   if (frontmatter.xfeed_id !== undefined) {
-    if (!hex.safeParse(frontmatter.xfeed_id).success) throw new BridgeError(422,'xfeed_id 格式错误');
+    if (!hex.safeParse(frontmatter.xfeed_id).success) throw new BridgeError(422,'ob.badId');
     return content;
   }
   frontmatter.xfeed_id = hex.parse(id);
@@ -77,32 +80,32 @@ export function ensureIdentity(content:string,id:string,roam=false) {
 export function applyOperation(content:string,operation:Operation) {
   const op = operationSchema.parse(operation);
   const {frontmatter,body} = splitNote(content);
-  if (frontmatter.xfeed_id !== op.noteId) throw new BridgeError(409,'笔记身份已经变化，请重新同步');
+  if (frontmatter.xfeed_id !== op.noteId) throw new BridgeError(409,'ob.identityChanged');
   const applied = frontmatter.xfeed_applied_ops ?? [];
-  if (!Array.isArray(applied) || !applied.every(id => typeof id === 'string')) throw new BridgeError(422,'复习操作记录格式错误');
+  if (!Array.isArray(applied) || !applied.every(id => typeof id === 'string')) throw new BridgeError(422,'ob.badApplied');
   if (applied.includes(op.id)) return content;
   if(op.type==='archive'){
     const tags=Array.isArray(frontmatter.tags)?frontmatter.tags:typeof frontmatter.tags==='string'?frontmatter.tags.split(/[\s,]+/).filter(Boolean):frontmatter.tags==null?[]:null;
-    if(!tags || !tags.every(tag=>typeof tag==='string'))throw new BridgeError(422,'笔记 tags 属性格式错误，无法归档');
+    if(!tags || !tags.every(tag=>typeof tag==='string'))throw new BridgeError(422,'ob.badTagsProp');
     frontmatter.tags=tags.some(tag=>tag.replace(/^#/,'')==='no-x-feed')?tags:[...tags,'no-x-feed'];
     frontmatter.xfeed_applied_ops=[...applied,op.id];
     return withProperties(frontmatter,body);
   }
-  if(excluded(content))throw new BridgeError(409,'文章已归档，不再写入复习记录');
-  if (!op.roam && !eligible(content)) throw new BridgeError(409,'文章已移除 #x-feed，请放弃这条待同步操作');
+  if(excluded(content))throw new BridgeError(409,'ob.archived');
+  if (!op.roam && !eligible(content)) throw new BridgeError(409,'ob.noFeedTag');
   if(op.type==='edit'){
     if(body===op.markdown)return content;
-    if(bodyVersion(body)!==op.expectedVersion)throw new BridgeError(409,'正文已在 Obsidian 中修改，草稿已保留，请按最新正文重新编辑');
+    if(bodyVersion(body)!==op.expectedVersion)throw new BridgeError(409,'ob.bodyChanged');
     const next=content.slice(0,content.length-body.length)+op.markdown;
-    if(Buffer.byteLength(next)>2*1024*1024)throw new BridgeError(413,'文章超过 2 MiB，无法保存');
+    if(Buffer.byteLength(next)>2*1024*1024)throw new BridgeError(413,'ob.noteTooLarge');
     return next;
   }
   const current = readMetadata(frontmatter);
-  if (op.type === 'metadata' && op.expectedVersion !== current.version) throw new BridgeError(409,'元数据已在另一端修改，请重新读取后编辑');
+  if (op.type === 'metadata' && op.expectedVersion !== current.version) throw new BridgeError(409,'ob.metadataChanged');
   let next;
   if (op.type === 'review') {
-    if (current.reviewCount === Number.MAX_SAFE_INTEGER) throw new BridgeError(422,'复习次数超出范围');
-    if (Date.parse(op.reviewedAt) > Date.now()+60000) throw new BridgeError(422,'复习时间超前，请检查电脑时间');
+    if (current.reviewCount === Number.MAX_SAFE_INTEGER) throw new BridgeError(422,'review.overflow');
+    if (Date.parse(op.reviewedAt) > Date.now()+60000) throw new BridgeError(422,'ob.futureReview');
     next = reviewMetadata(current,op.reviewedAt,op.rating);
   } else { next = {...current,...op.metadata}; }
   frontmatter.xfeed_review_count = next.reviewCount;

@@ -1,9 +1,16 @@
 import { browser } from 'wxt/browser';
 import type { Feed } from '../../lib/types';
+import { t, setLocale, getLocale, resolveLocale, formatDate, type Key } from '../../lib/i18n';
 import panel from './panel.html?raw';
 import './style.css';
 
 document.querySelector('main')!.innerHTML = panel;
+function translate(){
+  document.documentElement.lang=getLocale()==='zh'?'zh-CN':'en';
+  for(const node of document.querySelectorAll<HTMLElement>('[data-i18n]'))node.textContent=t(node.dataset.i18n as Key);
+  for(const node of document.querySelectorAll<HTMLInputElement>('[data-i18n-placeholder]'))node.placeholder=t(node.dataset.i18nPlaceholder as Key);
+  for(const node of document.querySelectorAll<HTMLElement>('[data-i18n-aria-label]'))node.setAttribute('aria-label',t(node.dataset.i18nAriaLabel as Key));
+}
 if(window.parent!==window)document.addEventListener('keydown',event=>{
   if(event.key==='Escape')window.parent.postMessage('x-learning-feed:close','https://x.com');
 });
@@ -16,6 +23,7 @@ const tagMode = element<HTMLInputElement>('tag-mode');
 const tags = element<HTMLInputElement>('tags');
 const token = element<HTMLInputElement>('token');
 const port = element<HTMLInputElement>('port');
+const language = element<HTMLSelectElement>('language');
 function status(text: string) { element('status').textContent = text; }
 async function send(message: unknown) {
   const response = await browser.runtime.sendMessage(message);
@@ -24,6 +32,7 @@ async function send(message: unknown) {
 }
 async function refresh() {
   const feed: Feed = await send({type:'feed'});
+  if(feed.locale && feed.locale!==getLocale()){setLocale(feed.locale);translate();}
   if(document.activeElement!==enabled)enabled.checked = feed.settings.enabled;
   if(document.activeElement!==every)every.value = String(feed.settings.every);
   if(document.activeElement!==timeWeight)timeWeight.checked=feed.settings.timeWeight!==false;
@@ -31,67 +40,75 @@ async function refresh() {
   if(document.activeElement!==tagMode)tagMode.checked=feed.settings.tags!==undefined;
   if(document.activeElement!==tags)tags.value=feed.settings.tags?.join(', ')??'x-feed';
   tags.disabled=!tagMode.checked;
-  element('selection-info').textContent=feed.settings.tags?`推送带 ${feed.settings.tags.map(tag=>`#${tag}`).join('、')} 中任意一个标签的文章。`:feed.settings.roam?'从整个笔记库随机选文。':'给文章加 #x-feed，它就会出现在信息流中。';
-  element('note-count').textContent = `${feed.notes.length} 篇`;
+  element('selection-info').textContent=feed.settings.tags?t('panel.select.tags',{tags:feed.settings.tags.map(tag=>`#${tag}`).join(t('panel.tagSeparator'))}):t(feed.settings.roam?'panel.select.roam':'panel.select.default');
+  element('note-count').textContent = t('panel.count',{count:feed.notes.length});
   element('notes').replaceChildren(...feed.notes.map(note => {
     const li = document.createElement('li');
     const title = document.createElement('span'); title.textContent = note.title;
-    const count = document.createElement('small'); count.textContent = note.metadata?.nextReview && Date.parse(note.metadata.nextReview)>Date.now()?'待到期':`复习 ${note.metadata?.reviewCount??0} 次`;
+    const count = document.createElement('small'); count.textContent = note.metadata?.nextReview && Date.parse(note.metadata.nextReview)>Date.now()?t('panel.due'):t('panel.reviewCount',{count:note.metadata?.reviewCount??0});
     li.append(title,count); return li;
   }));
-  if(!feed.notes.length)element('notes').textContent=feed.settings.roam?'正在读取笔记库，暂时没有可漫游的文章。':'还没有文章。连接 Obsidian 后，给一篇笔记加上标签试试。';
+  if(!feed.notes.length)element('notes').textContent=t(feed.settings.roam?'panel.empty.roam':'panel.empty');
   const issues=(feed.pending??[]).filter(item=>item.status!=='pending');
   element('issues').hidden=!issues.length;
   element('pending').replaceChildren(...issues.map(item=>{
     const li=document.createElement('li');
-    const title=document.createElement('span');title.textContent=feed.notes.find(n=>n.id===item.noteId)?.title??'已移除的文章';
-    const reason=document.createElement('p');reason.textContent=item.error??'这次修改无法写回';
+    const title=document.createElement('span');title.textContent=feed.notes.find(n=>n.id===item.noteId)?.title??t('panel.removed');
+    const reason=document.createElement('p');reason.textContent=item.error??t('panel.unwritable');
     li.append(title,reason);
-    if(item.metadata){const draft=document.createElement('p');draft.textContent=`你的修改：${item.metadata.reviewCount} 次；时间 ${item.metadata.lastReviewed?new Date(item.metadata.lastReviewed).toLocaleString():'无'}；备注 ${item.metadata.remarks||'无'}`;li.append(draft);}
-    const discard=document.createElement('button');discard.type='button';discard.className='secondary';discard.textContent=item.type==='edit'?'放弃草稿，保留 Obsidian 当前数据':'保留 Obsidian 当前数据';
-    discard.addEventListener('click',async()=>{try{await send({type:'discard',id:item.id});await refresh();status('已保留 Obsidian 中的数据。需要调整时，请在 Obsidian 中修改属性。');}catch(error){status((error as Error).message);}});
-    if(item.type==='edit'){const draft=document.createElement('textarea');draft.readOnly=true;draft.value=item.markdown??'';draft.setAttribute('aria-label','保留的正文草稿');draft.style.cssText='width:100%;min-height:160px;';li.append(draft);}
+    if(item.metadata){const draft=document.createElement('p');draft.textContent=t('panel.draft',{count:item.metadata.reviewCount,time:item.metadata.lastReviewed?formatDate(item.metadata.lastReviewed):t('panel.none'),remarks:item.metadata.remarks||t('panel.none')});li.append(draft);}
+    const discard=document.createElement('button');discard.type='button';discard.className='secondary';discard.textContent=t(item.type==='edit'?'panel.discardDraft':'panel.keep');
+    discard.addEventListener('click',async()=>{try{await send({type:'discard',id:item.id});await refresh();status(t('panel.kept'));}catch(error){status((error as Error).message);}});
+    if(item.type==='edit'){const draft=document.createElement('textarea');draft.readOnly=true;draft.value=item.markdown??'';draft.setAttribute('aria-label',t('panel.draftAria'));draft.style.cssText='width:100%;min-height:160px;';li.append(draft);}
     li.append(discard);return li;
   }));
   const state=await browser.storage.local.get(['token','syncStatus','lastSync']);
   const waiting=(feed.pending??[]).filter(item=>item.status==='pending').length;
   const offline=String(state.syncStatus??'').startsWith('待同步');
-  element('sync-info').textContent=!state.token?'尚未连接 Obsidian':offline?`Obsidian 暂未连接${waiting?` · ${waiting} 条记录已存本地`: ' · 使用本地笔记'}`:waiting?'正在自动保存…':state.lastSync?'已连接 · 修改自动保存':'正在连接 Obsidian…';
+  element('sync-info').textContent=!state.token?t('panel.notConnected'):offline?t('panel.offline')+(waiting?t('panel.offline.waiting',{count:waiting}):t('panel.offline.local')):t(waiting?'panel.autosaving':state.lastSync?'panel.connected':'panel.connecting');
   element('sync-info').dataset.state=state.token && !offline ? 'connected' : 'offline';
 }
 const settings=element<HTMLFormElement>('settings');
 settings.addEventListener('change',async event=>{
+  if(event.target===language){
+    try{await send({type:'locale',locale:language.value});await refresh();}
+    catch(error){status((error as Error).message);}
+    return;
+  }
   if(event.target===roam && roam.checked)tagMode.checked=false;
   if(event.target===tagMode && tagMode.checked)roam.checked=false;
   tags.disabled=!tagMode.checked;
   if(!every.reportValidity())return;
   if(tagMode.checked && !tags.reportValidity())return;
   const selected=[...new Set(tags.value.split(/[\s,，]+/).map(tag=>tag.replace(/^#/,'')).filter(Boolean))];
-  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),roam:roam.checked,timeWeight:timeWeight.checked,...(tagMode.checked?{tags:selected}:{})}});status('设置已保存。');}
+  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),roam:roam.checked,timeWeight:timeWeight.checked,...(tagMode.checked?{tags:selected}:{})}});status(t('panel.settingsSaved'));}
   catch(error){status((error as Error).message);}
 });
 settings.addEventListener('submit',event=>event.preventDefault());
 const bridge=element<HTMLFormElement>('bridge');
 bridge.addEventListener('submit',async event=>{
   event.preventDefault();const button=bridge.querySelector<HTMLButtonElement>('button[type=submit]')!;
-  button.disabled=true;status('正在连接…');
+  button.disabled=true;status(t('panel.connectingShort'));
   try{
     await browser.storage.local.set({token:token.value,port:Number(port.value)});
     await browser.storage.local.remove(['revision','peer']);
-    await send({type:'sync'});await refresh();element<HTMLDetailsElement>('connection').open=false;status('已连接。以后会自动保存，无需手动同步。');
+    await send({type:'sync'});await refresh();element<HTMLDetailsElement>('connection').open=false;status(t('panel.connectedDone'));
   }catch(error){status((error as Error).message);}
   finally{button.disabled=false;}
 });
 element('disconnect').addEventListener('click',async()=>{
-  await browser.storage.local.remove(['token','revision']);token.value='';await refresh();status('已断开，笔记与未保存的修改仍留在本地。');
+  await browser.storage.local.remove(['token','revision']);token.value='';await refresh();status(t('panel.disconnected'));
 });
 async function init(){
-  const config=await browser.storage.local.get(['token','port']);
+  const config=await browser.storage.local.get(['token','port','locale']);
+  language.value=typeof config.locale==='string'?config.locale:'auto';
+  setLocale(resolveLocale(config.locale,navigator.language));translate();
   token.value=typeof config.token==='string'?config.token:'';port.value=String(config.port??43127);
   element<HTMLDetailsElement>('connection').open=!config.token;
   await refresh();
   if(config.token)void send({type:'sync'}).catch(()=>{}).finally(()=>refresh().catch(error=>status(error.message)));
   browser.storage.onChanged.addListener((changes,area)=>{
+    if(area==='local' && 'locale' in changes)language.value=typeof changes.locale.newValue==='string'?changes.locale.newValue:'auto';
     if(area==='local' && ['version','syncStatus','token'].some(key=>key in changes))void refresh().catch(error=>status(error.message));
   });
 }

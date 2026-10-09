@@ -11,7 +11,7 @@ test('原页面面板：图标只向当前标签发消息，不打开扩展页�
   const chrome={runtime:{id:'test',getURL:path=>`chrome-extension://test${path}`,onMessage:{addListener:()=>{}}},
     action:{onClicked:{addListener:fn=>{click=fn;}},setTitle:async()=>{}},
     tabs:{sendMessage:async(id,message)=>sent.push({id,message}),create:()=>assert.fail('Must not open a tab')},
-    alarms:{create:()=>{},onAlarm:{addListener:()=>{}}},storage:{local:{}}};
+    alarms:{create:()=>{},onAlarm:{addListener:()=>{}}},storage:{local:{get:async()=>({})}}};
   runInNewContext(await readFile('.output/chrome-mv3/background.js','utf8'),{chrome,indexedDB,crypto:webcrypto,console});
   assert.equal(typeof click,'function');await click({id:7});
   assert.deepEqual(JSON.parse(JSON.stringify(sent)),[{id:7,message:{type:'toggle-panel'}}]);

@@ -47,7 +47,7 @@ test('构建后的卡片：展开、复习与归档，写回失败可重试，�
   w.setInterval=callback=>{refresh=callback;return 1;};w.clearInterval=()=>{};
   let feed={notes:[{id:'a'.repeat(64),source:'b'.repeat(64),path:'学习/推荐系统/Obsidian 文章.md',title:'Obsidian 文章',html:'<p>正文</p>',metadata:{reviewCount:2,lastReviewed:'2026-10-07T09:20:33.123Z',remarks:'原备注',version:'c'.repeat(64)}}],settings:{every:1,enabled:true},version:'one'};
   let failArchive=true;
-  w.chrome={runtime:{id:'test',onMessage:{addListener:()=>{},removeListener:()=>{}},getURL:path=>`chrome-extension://test${path}`,sendMessage:async message=>{if(message.type==='feed')return feed;sent.push(message);if(message.type==='archive' && failArchive){failArchive=false;return{error:'未连接，请重试'};}return{ok:true,pending:true};}}};
+  w.chrome={runtime:{id:'test',onMessage:{addListener:()=>{},removeListener:()=>{}},getURL:path=>`chrome-extension://test${path}`,sendMessage:async message=>{if(message.type==='feed')return feed;if(message.type==='shown')return{ok:true};sent.push(message);if(message.type==='archive' && failArchive){failArchive=false;return{error:'未连接，请重试'};}return{ok:true,pending:true};}}};
   const roots=new WeakMap();const attach=w.Element.prototype.attachShadow;
   w.Element.prototype.attachShadow=function(options){const root=attach.call(this,options);roots.set(this,root);return root;};
   w.eval(await readFile('.output/chrome-mv3/content-scripts/feed.js','utf8'));
@@ -55,23 +55,20 @@ test('构建后的卡片：展开、复习与归档，写回失败可重试，�
   const root=()=>roots.get(w.document.querySelector('x-learning-card'));
   assert.equal(root().querySelector('.source').title,feed.notes[0].path);
   assert.equal(root().querySelectorAll('.source li').length,3);
-  [...root().querySelectorAll('button')].find(b=>b.textContent==='已复习 +1').click();await frame();
-  assert.equal(sent[0].type,'review');assert.equal(sent[0].noteId,'a'.repeat(64));assert.equal(sent[0].metadata,undefined);
-  assert.deepEqual([...root().querySelectorAll('footer button')].map(b=>b.textContent),['展开','在 Obsidian 中打开','现场编辑','点赞','点踩','已复习 +1','归档','重来','困难','良好','简单']);
+  assert.deepEqual([...root().querySelectorAll('footer button')].map(b=>b.textContent),['展开','在 Obsidian 中打开','现场编辑','点赞','点踩','归档','重来','困难','良好','简单']);
   assert.equal(root().querySelector('textarea').parentElement.hidden,true);
   root().querySelector('footer button').click();
   feed={...feed,notes:[{...feed.notes[0],metadata:{...feed.notes[0].metadata,reviewCount:3,version:'d'.repeat(64)}}],version:'two'};
   refresh();await frame();
   assert.ok(root().querySelector('.summary').textContent.includes('已复习 3 次'));
   assert.equal(root().querySelector('footer button').textContent,'收起');
-  assert.deepEqual([...root().querySelectorAll('footer button')].map(b=>b.textContent),['收起','在 Obsidian 中打开','现场编辑','点赞','点踩','已复习 +1','归档','重来','困难','良好','简单']);
-  assert.equal(sent.length,1);
-  assert.ok(!('html' in sent[0]) && !('body' in sent[0]));
+  assert.deepEqual([...root().querySelectorAll('footer button')].map(b=>b.textContent),['收起','在 Obsidian 中打开','现场编辑','点赞','点踩','归档','重来','困难','良好','简单']);
+  assert.equal(sent.length,0);
   const archive=()=>[...root().querySelectorAll('button')].find(b=>b.textContent==='归档');
   archive().click();await frame();assert.ok(root());assert.equal(archive().disabled,false);
   assert.ok([...root().querySelectorAll('[role=status]')].some(el=>el.textContent.includes('未连接')));
   archive().click();await frame();assert.equal(w.document.querySelector('x-learning-card'),null);
-  assert.equal(sent[2].type,'archive');assert.equal(sent[2].noteId,'a'.repeat(64));
+  assert.equal(sent[1].type,'archive');assert.equal(sent[1].noteId,'a'.repeat(64));
   refresh();await frame();assert.equal(w.document.querySelector('x-learning-card'),null);
 });
 
@@ -81,7 +78,7 @@ test('构建后的卡片：打开 Obsidian 与熟悉度评分，失败可重试�
   w.setInterval=()=>1;w.clearInterval=()=>{};
   const feed={notes:[{id:'a'.repeat(64),source:'b'.repeat(64),path:'学习/文章.md',title:'文章',html:'<p>正文</p>',metadata:{reviewCount:0,lastReviewed:null,remarks:'',version:'c'.repeat(64)}}],settings:{every:1,enabled:true}};
   let fail=true;
-  w.chrome={runtime:{id:'test',onMessage:{addListener:()=>{},removeListener:()=>{}},getURL:p=>`chrome-extension://test${p}`,sendMessage:async message=>{if(message.type==='feed')return feed;sent.push(message);return message.type==='review' && fail?{error:'暂时无法保存'}:{ok:true};}}};
+  w.chrome={runtime:{id:'test',onMessage:{addListener:()=>{},removeListener:()=>{}},getURL:p=>`chrome-extension://test${p}`,sendMessage:async message=>{if(message.type==='feed')return feed;if(message.type==='shown')return{ok:true};sent.push(message);return message.type==='review' && fail?{error:'暂时无法保存'}:{ok:true};}}};
   let root;const attach=w.Element.prototype.attachShadow;w.Element.prototype.attachShadow=function(options){root=attach.call(this,options);return root;};
   w.eval(await readFile('.output/chrome-mv3/content-scripts/feed.js','utf8'));
   const frame=()=>new Promise(resolve=>setTimeout(resolve,50));await frame();

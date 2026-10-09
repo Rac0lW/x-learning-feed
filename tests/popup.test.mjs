@@ -10,7 +10,7 @@ test('网页内面板：设置自动保存，无导入或同步按钮，离线�
   const html=await readFile('.output/chrome-mv3/panel.html','utf8');
   const dom=new JSDOM(html,{url:'https://extension.invalid/panel.html',runScripts:'dangerously'});
   t.after(()=>dom.window.close());const w=dom.window;
-  const storage={token:'b'.repeat(64),port:43127,syncStatus:'已同步',lastSync:new Date().toISOString()};
+  const storage={token:'b'.repeat(64),port:43127,syncStatus:'已同步',lastSync:new Date().toISOString(),locale:'zh'};
   let feed={notes:[{id:'a'.repeat(64),title:'文章 <script>unsafe</script>',metadata:{reviewCount:2}}],settings:{every:10,enabled:true},pending:[]};
   const sent=[];let changed;
   w.browser={runtime:{id:'test',sendMessage:async message=>{

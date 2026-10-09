@@ -1,10 +1,11 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { browser } from 'wxt/browser';
 import { Timeline } from '../lib/timeline';
+import { t } from '../lib/i18n';
 export default defineContentScript({
   matches: ['https://x.com/*'],
   main(ctx) {
-    const timeline = new Timeline(document,(type,noteId,rating,edit)=>browser.runtime.sendMessage({type,noteId,...edit,...(rating!==undefined?{rating}:{})}));
+    const timeline = new Timeline(document,(type,noteId,rating,edit)=>browser.runtime.sendMessage({type,noteId,...edit,...(rating!==undefined?{rating}:{})}),noteId=>{void browser.runtime.sendMessage({type:'shown',noteId}).catch(()=>{});});
     let scheduled = false;
     let version: unknown;
     let panel: HTMLElement | undefined;
@@ -17,8 +18,8 @@ export default defineContentScript({
       const shadow=panel.attachShadow({mode:'closed'});
       const style=document.createElement('style');
       style.textContent=':host{color-scheme:light dark}iframe{display:block;width:100%;height:100%;border:1px solid #8884;border-radius:12px;background:light-dark(#fff,#242328);box-sizing:border-box;box-shadow:0 8px 32px #0003}button{position:absolute;right:10px;top:10px;width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:light-dark(#746f7e,#aaa4b6);font:20px/1 system-ui;cursor:pointer}button:hover{background:#8882}button:focus-visible{outline:2px solid #7452ce}@media(prefers-reduced-motion:no-preference){iframe{animation:slide-in .15s ease-out}@keyframes slide-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}}';
-      frame=document.createElement('iframe');frame.src=browser.runtime.getURL('/panel.html');frame.title='X Learning Feed 学习设置';
-      const close=document.createElement('button');close.type='button';close.textContent='×';close.setAttribute('aria-label','收起学习设置');close.addEventListener('click',closePanel);
+      frame=document.createElement('iframe');frame.src=browser.runtime.getURL('/panel.html');frame.title=t('panel.frame');
+      const close=document.createElement('button');close.type='button';close.textContent='×';close.setAttribute('aria-label',t('panel.close'));close.addEventListener('click',closePanel);
       shadow.append(style,frame,close);document.body.append(panel);
     }
     const onMessage=(message:{type?:string},sender:{id?:string})=>{

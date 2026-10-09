@@ -1,4 +1,5 @@
 import type { Note, Pending } from './types.js';
+import { t } from './i18n.js';
 let database: Promise<IDBDatabase> | undefined;
 function db() {
   return database ??= new Promise<IDBDatabase>((resolve,reject) => {
@@ -57,7 +58,7 @@ export async function replaceSource(source:string,notes:Note[]) {
         if(JSON.stringify(old)!==JSON.stringify(note)){store.put(note);changed=true;}
       }
     };
-    tx.oncomplete=()=>resolve(changed);tx.onerror=tx.onabort=()=>reject(tx.error??new Error('笔记 ID 与另一来源冲突'));
+    tx.oncomplete=()=>resolve(changed);tx.onerror=tx.onabort=()=>reject(tx.error??new Error(t('bg.idConflict')));
   });
 }
 export async function pending():Promise<Pending[]> {

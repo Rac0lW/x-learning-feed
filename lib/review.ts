@@ -1,6 +1,7 @@
 import type { Metadata, Note, Rating } from './types.js';
+import { t } from './i18n.js';
 
-export const ratings: {value:Rating;label:string}[] = [{value:1,label:'重来'},{value:2,label:'困难'},{value:3,label:'良好'},{value:4,label:'简单'}];
+export const ratings: {value:Rating;readonly label:string}[] = ([1,2,3,4] as const).map(value=>({value,get label(){return t(`rating.${value}`);}}));
 export function noteWeight(note:Note,timeWeight=true,now=Date.now(),characters=0):number {
   const feedback=2**(note.feedback??0)/(1+characters/1000);
   if(!timeWeight)return feedback;
@@ -9,7 +10,7 @@ export function noteWeight(note:Note,timeWeight=true,now=Date.now(),characters=0
   return feedback*Math.min(5,1+days/7);
 }
 export function reviewMetadata(current:Metadata,reviewedAt:string,rating?:Rating):Metadata {
-  if(current.reviewCount===Number.MAX_SAFE_INTEGER)throw new Error('复习次数超出范围');
+  if(current.reviewCount===Number.MAX_SAFE_INTEGER)throw new Error(t('review.overflow'));
   const older=!!current.lastReviewed && Date.parse(reviewedAt)<Date.parse(current.lastReviewed);
   const next={...current,reviewCount:current.reviewCount+1,lastReviewed:older?current.lastReviewed:reviewedAt};
   if(rating!==undefined && !older){

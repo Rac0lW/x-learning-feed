@@ -94,6 +94,16 @@ test('切换自选标签重新分配文章，同一篇仍可进入新标签列�
   assert.equal(timeline.assignments.get('1'),note('a').id);assert.equal(document.querySelectorAll('x-learning-card').length,1);timeline.clear();
 });
 
+test('今天已推送的文章刷新后不再推送，并通知记录新推送的文章',()=>{
+  const main=document.querySelector('main');main.replaceChildren(cell(1),cell(2),cell(3));
+  const recorded=[];const timeline=new Timeline(document,undefined,id=>recorded.push(id));
+  timeline.update({notes:[note('a'),note('b')],settings:{every:1,enabled:true,roam:true},shown:[note('a').id]});timeline.reconcile();
+  assert.equal(timeline.assignments.get('1'),note('b').id);assert.equal(timeline.assignments.size,1,'A note shown earlier today stays hidden even after the round is used up');
+  assert.deepEqual(recorded,[note('b').id]);
+  timeline.update({notes:[note('a'),note('b')],settings:{every:1,enabled:true,tags:['学习']},shown:[note('a').id,note('b').id]});timeline.reconcile();
+  assert.equal(timeline.assignments.size,0,'Switching modes keeps today’s record');timeline.clear();
+});
+
 test('推送跳过未到期文章，到期后可以在后续推文中出现',()=>{
   const main=document.querySelector('main');main.replaceChildren(cell(1));
   const now=Date.now;const start=now();Date.now=()=>start;

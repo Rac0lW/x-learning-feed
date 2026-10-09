@@ -23,7 +23,7 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   class Plugin {async loadData(){return{token,source,port};}async saveData(data){this.saved=data;}addSettingTab(){}addCommand(){throw new Error('评分入口只放在 X');}addRibbonIcon(){throw new Error('评分入口只放在 X');} }
   class PluginSettingTab {constructor(app,plugin){this.app=app;}}
   const api={Plugin,PluginSettingTab,Setting:class{},Notice:class{},TFile,getFrontMatterInfo:info,parseYaml:text=>yaml.load(text||'{}'),stringifyYaml:value=>yaml.dump(JSON.parse(JSON.stringify(value))),
-    getAllTags:cache=>cache.tags};
+    getAllTags:cache=>cache.tags,getLanguage:()=>'zh'};
   const module={exports:{}};
   const nativeFocus={app:0,window:0,restore:0,show:0};
   const electron={remote:{app:{focus:()=>{nativeFocus.app++;}},getCurrentWindow:()=>({isMinimized:()=>true,restore:()=>{nativeFocus.restore++;},show:()=>{nativeFocus.show++;},focus:()=>{nativeFocus.window++;}})}};
@@ -37,6 +37,9 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   const post=op=>fetch(`${url}/metadata`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(op)});
   const open=body=>fetch(`${url}/open`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(body)});
   assert.equal((await fetch(`${url}/feed`)).status,403);
+  assert.equal((await (await fetch(`${url}/feed`,{headers:{'Accept-Language':'en'}})).json()).error,'Wrong token or request origin');
+  assert.equal((await (await fetch(`${url}/metadata`,{method:'POST',headers:{...headers,'Accept-Language':'en','Content-Type':'application/json'},body:'{'})).json()).error,'Invalid JSON');
+  assert.equal((await (await fetch(`${url}/metadata`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:'{'})).json()).error,'JSON 格式错误');
   assert.equal((await fetch(`${url}/feed`,{headers:{...headers,Origin:'https://x.com'}})).status,403);
   const first=await snapshot();assert.equal(first.notes.length,2);assert.equal(first.source,source);
   const note=first.notes.find(n=>n.title==='学习文章');assert.ok(note);assert.equal(note.metadata.reviewCount,0);
@@ -81,6 +84,12 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   const sender={id:'test',url:'chrome-extension://test/options.html'};const contentSender={id:'test',url:'https://x.com/home'};
   assert.ok((await handler({type:'sync'},sender)).ok);
   assert.equal((await handler({type:'feed'},contentSender)).settings.timeWeight,true);
+  assert.deepEqual([...(await handler({type:'feed'},contentSender)).shown],[]);
+  assert.ok((await handler({type:'shown',noteId:'invalid'},contentSender)).error);
+  assert.ok((await handler({type:'shown',noteId:note.id},contentSender)).ok);assert.ok((await handler({type:'shown',noteId:note.id},contentSender)).ok);
+  assert.deepEqual([...(await handler({type:'feed'},contentSender)).shown],[note.id],'A note shown today is remembered once across page loads');
+  const shownRecord=(await chrome.storage.local.get('shown')).shown;await chrome.storage.local.set({shown:{...shownRecord,day:'2000-01-01'}});
+  assert.deepEqual([...(await handler({type:'feed'},contentSender)).shown],[],'Yesterday’s shown notes can be pushed again');
   assert.ok((await handler({type:'settings',settings:{every:1,enabled:true,timeWeight:'yes'}},sender)).error);
   assert.ok((await handler({type:'like',noteId:'invalid'},contentSender)).error);
   assert.ok((await handler({type:'like',noteId:note.id},{id:'test',url:'https://evil.example/'})).error);

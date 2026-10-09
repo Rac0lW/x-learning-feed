@@ -12,7 +12,7 @@ The Obsidian plugin and browser extension are the recommended setup. No X API, p
 
 ## Installation
 
-The current version is **0.7.1**. Build from source and install manually. You need desktop Obsidian, Chrome or Edge, and Node.js 22.13 or newer. The browser interface currently uses Chinese; the steps below include its Chinese labels.
+The current version is **0.9.1**. Build from source and install manually. You need desktop Obsidian, Chrome or Edge, and Node.js 22.13 or newer. The browser extension and the Obsidian plugin are available in English and Chinese. By default they follow the browser and Obsidian language; you can switch under Language in the extension panel and in the plugin settings. The steps below also give the Chinese labels.
 
 ### 1. Download and build
 
@@ -63,6 +63,10 @@ Back up the installed plugin's `main.js` and `manifest.json`, then replace them 
 
 The [Obsidian plugin guide](docs/obsidian-plugin.md) contains additional setup and property details in Chinese.
 
+## Language
+
+The extension panel has a **Language** option (Match browser, 中文, English). It changes the panel, the cards on X, and the errors that the Obsidian plugin returns to the browser. The Obsidian plugin has its own **Language** setting (Match Obsidian, 中文, English) for its settings page and notices. Other languages fall back to English.
+
 ## Choosing notes
 
 The default mode uses notes tagged `#x-feed`. Custom tag selection (`标签自选`) accepts tags separated by commas or spaces, such as `#learning, gamedev, learning/code`. Notes matching any selected tag are eligible. Both property tags and inline tags match exactly, including nested tags. Text inside code blocks does not count as a tag.
@@ -84,7 +88,7 @@ The familiarity buttons live in X cards. Their results are saved as Obsidian pro
 | Good | 良好 | 3 days | Previous interval × 2, rounded, at least 3 days |
 | Easy | 简单 | 7 days | Previous interval × 3, rounded, at least 7 days |
 
-Intervals are capped at 36,500 days. This is a simplified spaced repetition schedule, not Anki's full scheduler or FSRS. Choosing a grade records one review, removes the card, and postpones the note until it is due. Review +1 (`已复习 +1`) increments the count without changing an existing schedule. Expanding a card does not count as a review. Offline grades affect local selection immediately and sync later.
+Intervals are capped at 36,500 days. This is a simplified spaced repetition schedule, not Anki's full scheduler or FSRS. Choosing a grade records one review, removes the card, and postpones the note until it is due. Expanding a card does not count as a review. A note pushed into the X feed is not pushed again until the next day, even after a page refresh or a mode change; the browser keeps this record locally and resets it at local midnight. Offline grades affect local selection immediately and sync later.
 
 Three weights multiply together:
 

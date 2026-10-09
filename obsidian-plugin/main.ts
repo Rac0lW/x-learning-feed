@@ -1,34 +1,43 @@
+import * as obsidian from 'obsidian';
 import { Plugin, PluginSettingTab, Setting, Notice, TFile, getAllTags } from 'obsidian';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { render } from '../src/render';
 import { BridgeError, operationSchema, openSchema, bodyVersion, splitNote, hasTag, excluded, ensureIdentity, readMetadata, applyOperation, readTags } from './core';
 import type { Note } from '../lib/types';
+import { t, setLocale, resolveLocale, isPreference, type Locale, type LocalePreference } from '../lib/i18n';
 
-type Config = {token:string;source:string;port:number};
+type Config = {token:string;source:string;port:number;language?:LocalePreference};
+// getLanguage exists from Obsidian 1.8; older versions keep the language in localStorage.
+const obsidianLanguage=()=>typeof obsidian.getLanguage==='function'?obsidian.getLanguage():globalThis.localStorage?.getItem('language')??'en';
 export default class XLearningFeed extends Plugin {
   declare settings: Config;
   server?: Server;
-  state = '未启动';
+  private status:{key:'ob.notStarted'|'ob.running'|'ob.stopped'}|{message:string} = {key:'ob.notStarted'};
+  get state() {return 'message' in this.status ? this.status.message : t(this.status.key,{port:this.settings.port});}
+  set state(message:string) {this.status={message};}
+  applyLanguage() {setLocale(resolveLocale(this.settings.language??'auto',obsidianLanguage()));}
   private files = new Map<string,TFile>();
   private cache = new Map<string,{mtime:number;size:number;content:string;note:Note}>();
   private work:Promise<unknown> = Promise.resolve();
   async onload() {
     const saved = await this.loadData();
     this.settings = {token:randomBytes(32).toString('hex'),source:randomBytes(32).toString('hex'),port:43127,...saved};
-    if (!/^[a-f0-9]{64}$/.test(this.settings.token) || !/^[a-f0-9]{64}$/.test(this.settings.source) || !Number.isInteger(this.settings.port) || this.settings.port<1 || this.settings.port>65535) throw new Error('X Learning Feed 插件设置格式错误');
+    if(this.settings.language!==undefined && !isPreference(this.settings.language))this.settings.language='auto';
+    this.applyLanguage();
+    if (!/^[a-f0-9]{64}$/.test(this.settings.token) || !/^[a-f0-9]{64}$/.test(this.settings.source) || !Number.isInteger(this.settings.port) || this.settings.port<1 || this.settings.port>65535) throw new Error(t('ob.badConfig'));
     await this.saveData(this.settings);
     this.addSettingTab(new BridgeSettings(this.app,this));
-    this.app.workspace.onLayoutReady(() => {void this.start().catch(error => {this.state=error.message;new Notice(`X Learning Feed：${error.message}`);});});
+    this.app.workspace.onLayoutReady(() => {void this.start().catch(error => {this.state=error.message;new Notice(`X Learning Feed: ${error.message}`);});});
   }
   async start() {
     if (this.server) return;
     const server = createServer((req,res) => {void this.handle(req,res);});
     await new Promise<void>((resolve,reject) => {server.once('error',reject);server.listen(this.settings.port,'127.0.0.1',resolve);});
-    this.server = server; this.state = `运行中 · 127.0.0.1:${this.settings.port}`;
-    server.on('error',error => {this.state=error.message;new Notice(`X Learning Feed：${error.message}`);});
+    this.server = server; this.status = {key:'ob.running'};
+    server.on('error',error => {this.state=error.message;new Notice(`X Learning Feed: ${error.message}`);});
   }
-  onunload() {this.server?.closeAllConnections();this.server?.close();this.server=undefined;this.state='已停止';}
+  onunload() {this.server?.closeAllConnections();this.server?.close();this.server=undefined;this.status={key:'ob.stopped'};}
   private serialized<T>(task:()=>Promise<T>):Promise<T> {
     const next=this.work.then(task);this.work=next.catch(()=>{});return next;
   }
@@ -51,11 +60,11 @@ export default class XLearningFeed extends Plugin {
       const cache=this.app.metadataCache.getFileCache(file);
       // A just-written note can temporarily disappear from Obsidian's tag index.
       if (!roam && !(archiveId && cached?.note.id===archiveId) && !(cache && getAllTags(cache)?.includes('#x-feed'))) continue;
-      if (file.stat.size>2*1024*1024) {if(roam)continue;throw new BridgeError(422,`带标签文章超过 2 MiB：${file.basename}`);}
+      if (file.stat.size>2*1024*1024) {if(roam)continue;throw new BridgeError(422,'ob.tooLarge',{name:file.basename});}
       const fresh=cached && cached.mtime===file.stat.mtime && cached.size===file.stat.size;
       if(fresh && !archiveId && excluded(cached.content))continue;
       if(fresh && (roam || hasTag(cached.content,'x-feed'))){
-        if(files.has(cached.note.id))throw new BridgeError(409,`两篇笔记的 xfeed_id 相同：${file.basename}`);
+        if(files.has(cached.note.id))throw new BridgeError(409,'ob.duplicateId',{name:file.basename});
         files.set(cached.note.id,file);notes.push({...cached.note,tags:readTags(cached.content,cache?getAllTags(cache)??[]:[]),...(roam?{roam:true}:{})});continue;
       }
       let content=contents.get(file.path)??await this.app.vault.read(file);
@@ -65,8 +74,8 @@ export default class XLearningFeed extends Plugin {
       const {frontmatter,body}=splitNote(content);
       // Roaming is read-only until the user actually records a review.
       const id=frontmatter.xfeed_id??createHash('sha256').update(`${this.settings.source}:${file.path}`).digest('hex');
-      if (typeof id!=='string' || !/^[a-f0-9]{64}$/.test(id)) throw new BridgeError(422,`xfeed_id 格式错误：${file.basename}`);
-      if (files.has(id)) throw new BridgeError(409,`两篇笔记的 xfeed_id 相同：${file.basename}。请删除副本的 xfeed_id 后重试。`);
+      if (typeof id!=='string' || !/^[a-f0-9]{64}$/.test(id)) throw new BridgeError(422,'ob.badIdIn',{name:file.basename});
+      if (files.has(id)) throw new BridgeError(409,'ob.duplicateIdFix',{name:file.basename});
       files.set(id,file);
       const note={id,title:file.basename.slice(0,200),html:render(body,'markdown'),source:this.settings.source,path:file.path,metadata:readMetadata(frontmatter),tags:readTags(content,cache?getAllTags(cache)??[]:[])};
       if(Number.isFinite(file.stat.mtime))this.cache.set(file.path,{mtime:file.stat.mtime,size:file.stat.size,content,note});
@@ -76,21 +85,23 @@ export default class XLearningFeed extends Plugin {
     return {source:this.settings.source,notes,roam,tagSelection:true,reviewScheduling:true,openInObsidian:true,inlineEditing:true};
   }
   private async handle(req:IncomingMessage,res:ServerResponse) {
+    const requested=req.headers['accept-language'];
+    const locale:Locale=requested==='zh' || requested==='en' ? requested : resolveLocale(this.settings.language??'auto',obsidianLanguage());
     const send=(status:number,value:unknown) => {if(!res.destroyed)res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}).end(JSON.stringify(value));};
     const supplied=Buffer.from(req.headers.authorization??'');const expected=Buffer.from(`Bearer ${this.settings.token}`);
-    if (req.headers.host!==`127.0.0.1:${this.settings.port}` || (req.headers.origin && !/^chrome-extension:\/\//.test(req.headers.origin)) || supplied.length!==expected.length || !timingSafeEqual(supplied,expected)) {send(403,{error:'连接令牌或请求来源错误'});return;}
+    if (req.headers.host!==`127.0.0.1:${this.settings.port}` || (req.headers.origin && !/^chrome-extension:\/\//.test(req.headers.origin)) || supplied.length!==expected.length || !timingSafeEqual(supplied,expected)) {send(403,{error:t('ob.forbidden',{},locale)});return;}
     try {
       if (req.method==='GET' && (req.url==='/feed' || req.url==='/feed?roam=1')) {send(200,await this.serialized(()=>this.feed(req.url==='/feed?roam=1')));return;}
-      if (req.method!=='POST' || !['/metadata','/open','/document'].includes(req.url??'')) {send(404,{error:'接口不存在'});return;}
-      if (!req.headers['content-type']?.startsWith('application/json')) throw new BridgeError(415,'必须发送 JSON');
+      if (req.method!=='POST' || !['/metadata','/open','/document'].includes(req.url??'')) {send(404,{error:t('ob.notFound',{},locale)});return;}
+      if (!req.headers['content-type']?.startsWith('application/json')) throw new BridgeError(415,'ob.jsonOnly');
       const chunks:Buffer[]=[];let bytes=0;
-      for await (const chunk of req) {bytes+=chunk.length;if(bytes>(req.url==='/metadata'?16*1024*1024:32768))throw new BridgeError(413,'元数据请求过大');chunks.push(chunk);}
-      let input:unknown;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new BridgeError(400,'JSON 格式错误');}
+      for await (const chunk of req) {bytes+=chunk.length;if(bytes>(req.url==='/metadata'?16*1024*1024:32768))throw new BridgeError(413,'ob.tooBig');chunks.push(chunk);}
+      let input:unknown;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new BridgeError(400,'ob.badJson');}
       if(req.url==='/open' || req.url==='/document'){
-        const parsed=openSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'打开笔记请求格式错误');
-        const op=parsed.data;if(op.source!==this.settings.source)throw new BridgeError(409,'连接的笔记库已变化');
+        const parsed=openSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'ob.badOpen');
+        const op=parsed.data;if(op.source!==this.settings.source)throw new BridgeError(409,'ob.vaultChanged');
         const document=await this.serialized(async()=>{
-          await this.feed(op.roam===true);const file=this.files.get(op.noteId);if(!file)throw new BridgeError(409,'文章已移除或删除，请重新同步');
+          await this.feed(op.roam===true);const file=this.files.get(op.noteId);if(!file)throw new BridgeError(409,'ob.removed');
           if(req.url==='/document'){const {body}=splitNote(await this.app.vault.read(file));return{markdown:body,version:bodyVersion(body)};}
           await this.app.workspace.getLeaf(false).openFile(file,{active:true,state:{mode:'source'}});
           const remote=require('electron').remote;const window=remote.getCurrentWindow();
@@ -99,12 +110,12 @@ export default class XLearningFeed extends Plugin {
         });
         send(200,document??{opened:op.noteId});return;
       }
-      const parsed=operationSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'写回请求格式错误');
+      const parsed=operationSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'ob.badWrite');
       const operation=parsed.data;
-      if (operation.source!==this.settings.source) throw new BridgeError(409,'连接的笔记库已变化，请重新连接');
+      if (operation.source!==this.settings.source) throw new BridgeError(409,'ob.vaultChangedReconnect');
       const note=await this.serialized(async () => {
         await this.feed(operation.roam===true,operation.type==='archive'?operation.noteId:undefined);
-        const file=this.files.get(operation.noteId);if(!file)throw new BridgeError(409,'文章已移除标签或删除，请放弃这条待同步操作');
+        const file=this.files.get(operation.noteId);if(!file)throw new BridgeError(409,'ob.untagged');
         const content=await this.app.vault.process(file,data => applyOperation(ensureIdentity(data,operation.noteId,operation.roam===true),operation));
         if(operation.type!=='archive')this.cache.delete(file.path);
         if(operation.type==='archive')return undefined;
@@ -112,18 +123,21 @@ export default class XLearningFeed extends Plugin {
         return {id:operation.noteId,title:file.basename.slice(0,200),html:render(splitNote(content).body,'markdown'),source:this.settings.source,path:file.path,metadata:readMetadata(splitNote(content).frontmatter),tags:readTags(content,cache?getAllTags(cache)??[]:[]),...(operation.roam?{roam:true}:{})};
       });
       send(200,note?{note}:{archived:operation.noteId});
-    } catch(error) {send(error instanceof BridgeError ? error.status : 500,{error:error instanceof BridgeError ? error.message : '同步失败，请检查 Obsidian 笔记属性或插件日志'});if(!(error instanceof BridgeError))console.error('X Learning Feed:',error);}
+    } catch(error) {send(error instanceof BridgeError ? error.status : 500,{error:error instanceof BridgeError ? error.translate(locale) : t('ob.failed',{},locale)});if(!(error instanceof BridgeError))console.error('X Learning Feed:',error);}
   }
 }
 class BridgeSettings extends PluginSettingTab {
   constructor(app:Plugin['app'],private plugin:XLearningFeed){super(app,plugin);}
   display() {
     const {containerEl}=this;containerEl.empty();containerEl.createEl('h2',{text:'X Learning Feed'});
-    containerEl.createEl('p',{text:`状态：${this.plugin.state}`});
-    containerEl.createEl('p',{text:'给笔记添加 #x-feed 后进入信息流，或在 Chrome 开启笔记漫游随机浏览整个库。Chrome 可记录复习次数、时间和备注。'});
-    new Setting(containerEl).setName('连接令牌').setDesc('将令牌复制到 Chrome 扩展设置。仅用于本机连接。').addText(text=>{text.setValue(this.plugin.settings.token);text.inputEl.readOnly=true;});
-    new Setting(containerEl).setName('复制令牌').addButton(button=>button.setButtonText('复制').onClick(async()=>{await navigator.clipboard.writeText(this.plugin.settings.token);new Notice('连接令牌已复制');}));
-    containerEl.createEl('p',{text:`端口：${this.plugin.settings.port}。若启动失败且端口占用，请停止旧版 Node 服务。`});
-    new Setting(containerEl).setName('重试启动').addButton(button=>button.setButtonText('启动').onClick(async()=>{try{await this.plugin.start();}catch(error){this.plugin.state=(error as Error).message;}this.display();}));
+    containerEl.createEl('p',{text:t('ob.status',{state:this.plugin.state})});
+    containerEl.createEl('p',{text:t('ob.intro')});
+    new Setting(containerEl).setName(t('ob.language')).setDesc(t('ob.language.desc')).addDropdown(dropdown=>dropdown.addOption('auto',t('ob.language.auto')).addOption('zh','中文').addOption('en','English').setValue(this.plugin.settings.language??'auto').onChange(async value=>{
+      this.plugin.settings.language=value as LocalePreference;await this.plugin.saveData(this.plugin.settings);this.plugin.applyLanguage();this.display();
+    }));
+    new Setting(containerEl).setName(t('ob.token')).setDesc(t('ob.token.desc')).addText(text=>{text.setValue(this.plugin.settings.token);text.inputEl.readOnly=true;});
+    new Setting(containerEl).setName(t('ob.copyToken')).addButton(button=>button.setButtonText(t('ob.copy')).onClick(async()=>{await navigator.clipboard.writeText(this.plugin.settings.token);new Notice(t('ob.copied'));}));
+    containerEl.createEl('p',{text:t('ob.port',{port:this.plugin.settings.port})});
+    new Setting(containerEl).setName(t('ob.retry')).addButton(button=>button.setButtonText(t('ob.start')).onClick(async()=>{try{await this.plugin.start();}catch(error){this.plugin.state=(error as Error).message;}this.display();}));
   }
 }
