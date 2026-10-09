@@ -32,12 +32,14 @@ test('网页内面板：设置自动保存，无导入或同步按钮，离线�
   assert.equal(sent.filter(message=>message.type==='sync').length,1,'Opening the popup checks Obsidian automatically');
   assert.equal(w.document.getElementById('time-weight').checked,true,'Existing settings default to time weighting');
   const every=w.document.getElementById('every');every.value='5';every.dispatchEvent(new w.Event('change',{bubbles:true}));await flush();
-  assert.deepEqual(JSON.parse(JSON.stringify(sent.find(message=>message.type==='settings').settings)),{every:5,enabled:true,timeWeight:true});
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.find(message=>message.type==='settings').settings)),{every:5,enabled:true,timeWeight:true,mode:'browse'});
   assert.equal(w.document.getElementById('roam'),null,'Note roaming is no longer offered');
   const tagMode=w.document.getElementById('tag-mode');const tags=w.document.getElementById('tags');
   tags.value='#学习/编程，游戏开发 学习/编程';tagMode.checked=true;tagMode.dispatchEvent(new w.Event('change',{bubbles:true}));await flush();
   assert.equal(tags.disabled,false);
-  assert.deepEqual(JSON.parse(JSON.stringify(sent.filter(message=>message.type==='settings').at(-1).settings)),{enabled:true,every:5,timeWeight:true,tags:['学习/编程','游戏开发']});
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.filter(message=>message.type==='settings').at(-1).settings)),{enabled:true,every:5,timeWeight:true,mode:'browse',tags:['学习/编程','游戏开发']});
+  const learn=w.document.querySelector('input[name=mode][value=learn]');learn.checked=true;learn.dispatchEvent(new w.Event('change',{bubbles:true}));await flush();
+  assert.equal(sent.filter(message=>message.type==='settings').at(-1).settings.mode,'learn');
   changed({version:{}},'local');await flush();
   assert.equal(tags.value,'学习/编程, 游戏开发');assert.ok(w.document.getElementById('selection-info').textContent.includes('#学习/编程'));
   tags.value='新的标签';tags.dispatchEvent(new w.Event('change',{bubbles:true}));await flush();

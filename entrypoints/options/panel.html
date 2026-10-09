@@ -3,6 +3,8 @@
   <label class="row"><span data-i18n="panel.language"></span><select id="language"><option value="auto" data-i18n="panel.language.auto"></option><option value="zh" lang="zh-CN">中文</option><option value="en" lang="en">English</option></select></label>
   <label class="row"><span data-i18n="panel.enabled"></span><input id="enabled" type="checkbox" role="switch"></label>
   <label class="row"><span data-i18n="panel.every"></span><span><span data-i18n="panel.every.before"></span> <input id="every" type="number" min="1" max="100" value="10" required data-i18n-aria-label="panel.every.aria"> <span data-i18n="panel.every.after"></span></span></label>
+  <div class="row"><span id="mode-label" data-i18n="panel.mode"></span><span class="segmented" role="radiogroup" aria-labelledby="mode-label" aria-describedby="mode-hint"><label><input type="radio" name="mode" value="learn"><span data-i18n="panel.mode.learn"></span></label><label><input type="radio" name="mode" value="browse" checked><span data-i18n="panel.mode.browse"></span></label></span></div>
+  <p id="mode-hint" class="hint" data-i18n="panel.mode.hint"></p>
   <label class="row"><span data-i18n="panel.timeWeight"></span><input id="time-weight" type="checkbox" role="switch" checked aria-describedby="time-hint"></label>
   <p id="time-hint" class="hint" data-i18n="panel.timeWeight.hint"></p>
   <label class="row"><span data-i18n="panel.tagMode"></span><input id="tag-mode" type="checkbox" role="switch"></label>

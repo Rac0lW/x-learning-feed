@@ -9,7 +9,8 @@ import { t, type Key, type Locale } from '../lib/i18n';
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const timestamp = z.string().datetime({offset:true});
 const rating=z.union([z.literal(1),z.literal(2),z.literal(3),z.literal(4)]);
-const metadata = z.object({ reviewCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), lastReviewed: timestamp.nullable(), remarks:z.string().max(4000),rating:rating.nullable().optional(),intervalDays:z.number().min(0).max(36500).optional(),nextReview:timestamp.nullable().optional() }).strict();
+const mode=z.enum(['learn','browse']);
+const metadata = z.object({ reviewCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), lastReviewed: timestamp.nullable(), remarks:z.string().max(4000),rating:rating.nullable().optional(),intervalDays:z.number().min(0).max(36500).optional(),nextReview:timestamp.nullable().optional(),mode:mode.optional() }).strict();
 export const openSchema=z.object({source:hex,noteId:hex,roam:z.boolean().optional()}).strict();
 export const bodyVersion=(body:string)=>createHash('sha256').update(body).digest('hex');
 export const operationSchema = z.discriminatedUnion('type',[
@@ -17,6 +18,7 @@ export const operationSchema = z.discriminatedUnion('type',[
   z.object({id:z.string().uuid(),source:hex,noteId:hex,type:z.literal('metadata'),expectedVersion:hex,metadata,roam:z.boolean().optional()}).strict(),
   z.object({id:z.string().uuid(),source:hex,noteId:hex,type:z.literal('edit'),expectedVersion:hex,markdown:z.string().max(2*1024*1024),roam:z.boolean().optional()}).strict(),
   z.object({id:z.string().uuid(),source:hex,noteId:hex,type:z.literal('archive'),roam:z.boolean().optional()}).strict(),
+  z.object({id:z.string().uuid(),source:hex,noteId:hex,type:z.literal('mode'),mode,roam:z.boolean().optional()}).strict(),
 ]);
 // Errors carry a message key so each response can use the language the browser asked for.
 export class BridgeError extends Error {
@@ -63,7 +65,9 @@ export function eligible(content:string){return !excluded(content) && hasTag(con
 export function readMetadata(fm:Record<string,unknown>):Metadata {
   const last = fm.xfeed_last_reviewed instanceof Date ? fm.xfeed_last_reviewed.toISOString() : fm.xfeed_last_reviewed ?? null;
   const due=fm.xfeed_next_review instanceof Date?fm.xfeed_next_review.toISOString():fm.xfeed_next_review;
-  const parsed = metadata.safeParse({reviewCount:fm.xfeed_review_count ?? 0,lastReviewed:last,remarks:fm.xfeed_remarks ?? '',...(fm.xfeed_rating!==undefined?{rating:fm.xfeed_rating}:{}),...(fm.xfeed_interval_days!==undefined?{intervalDays:fm.xfeed_interval_days}:{}),...(due!==undefined?{nextReview:due}:{})});
+  const parsed = metadata.safeParse({reviewCount:fm.xfeed_review_count ?? 0,lastReviewed:last,remarks:fm.xfeed_remarks ?? '',...(fm.xfeed_rating!==undefined?{rating:fm.xfeed_rating}:{}),...(fm.xfeed_interval_days!==undefined?{intervalDays:fm.xfeed_interval_days}:{}),...(due!==undefined?{nextReview:due}:{}),
+    // A hand-typed mode that isn't learn/browse falls back to the panel default instead of blocking the whole feed.
+    ...(mode.safeParse(fm.xfeed_mode).success?{mode:fm.xfeed_mode}:{})});
   if(!parsed.success)throw new BridgeError(422,'ob.badMetadata');
   const value=parsed.data;
   return {...value,version:createHash('sha256').update(JSON.stringify(value)).digest('hex')};
@@ -103,6 +107,11 @@ export function applyOperation(content:string,operation:Operation) {
     const next=content.slice(0,content.length-body.length)+op.markdown;
     if(Buffer.byteLength(next)>2*1024*1024)throw new BridgeError(413,'ob.noteTooLarge');
     return next;
+  }
+  if(op.type==='mode'){
+    frontmatter.xfeed_mode=op.mode;
+    frontmatter.xfeed_applied_ops=[...applied,op.id];
+    return withProperties(frontmatter,body);
   }
   const current = readMetadata(frontmatter);
   if (op.type === 'metadata' && op.expectedVersion !== current.version) throw new BridgeError(409,'ob.metadataChanged');

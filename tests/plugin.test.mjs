@@ -147,6 +147,11 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   assert.ok(!(await handler({type:'feed'},contentSender)).notes.some(n=>n.id===note.id));
   const inlineNote=(await snapshot()).notes.find(n=>n.title==='内联标签');
   assert.equal((await handler({type:'like',noteId:inlineNote.id},contentSender)).feedback,1);
+  assert.ok((await handler({type:'mode',noteId:inlineNote.id,mode:'study'},contentSender)).error);
+  assert.equal((await handler({type:'mode',noteId:inlineNote.id,mode:'browse'},contentSender)).metadata.mode,'browse');
+  assert.ok((await handler({type:'sync'},sender)).ok);
+  assert.equal(yaml.load(info(inline.content).frontmatter).xfeed_mode,'browse');
+  assert.equal((await handler({type:'feed'},contentSender)).notes.find(n=>n.id===inlineNote.id).metadata.mode,'browse');
   const originalInlineBody=info(inline.content).contentStart;
   const inlineBody=inline.content.slice(originalInlineBody);
   offline=true;

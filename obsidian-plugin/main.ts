@@ -13,7 +13,7 @@ const obsidianLanguage=()=>typeof obsidian.getLanguage==='function'?obsidian.get
 export default class XLearningFeed extends Plugin {
   declare settings: Config;
   server?: Server;
-  private status:{key:'ob.notStarted'|'ob.running'|'ob.stopped'}|{message:string} = {key:'ob.notStarted'};
+  status:{key:'ob.notStarted'|'ob.running'|'ob.stopped'}|{message:string} = {key:'ob.notStarted'};
   get state() {return 'message' in this.status ? this.status.message : t(this.status.key,{port:this.settings.port});}
   set state(message:string) {this.status={message};}
   applyLanguage() {setLocale(resolveLocale(this.settings.language??'auto',obsidianLanguage()));}
@@ -143,18 +143,32 @@ export default class XLearningFeed extends Plugin {
     } catch(error) {send(error instanceof BridgeError ? error.status : 500,{error:error instanceof BridgeError ? error.translate(locale) : t('ob.failed',{},locale)});if(!(error instanceof BridgeError))console.error('X Learning Feed:',error);}
   }
 }
+const settingsStyle=`.xlf-hero{display:flex;gap:14px;align-items:center;padding:16px 18px;margin-bottom:12px;border-radius:var(--radius-l);background:linear-gradient(140deg,rgba(var(--color-purple-rgb),.12),transparent 70%);border:1px solid var(--background-modifier-border)}
+.xlf-mark{flex:none;display:grid;place-items:center;width:42px;height:42px;border-radius:12px;color:#fff;font-size:22px;background:linear-gradient(140deg,#9b7af0,#6a3fd1);box-shadow:0 4px 12px rgba(106,63,209,.3)}
+.xlf-hero h2{margin:0;font-size:var(--font-ui-large)}.xlf-hero p{margin:4px 0 0;color:var(--text-muted);font-size:var(--font-ui-small);line-height:1.5}
+.xlf-status{display:inline-flex;align-items:center;gap:7px;padding:2px 10px;border-radius:999px;font-weight:var(--font-medium);background:var(--background-modifier-hover)}.xlf-status:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--text-faint)}
+.xlf-status[data-state=running]{color:var(--color-green);background:rgba(var(--color-green-rgb),.1)}.xlf-status[data-state=running]:before{background:var(--color-green);box-shadow:0 0 0 3px rgba(var(--color-green-rgb),.25)}.xlf-status[data-state=error]{color:var(--color-red);background:rgba(var(--color-red-rgb),.1)}.xlf-status[data-state=error]:before{background:var(--color-red)}
+.xlf-port{display:block;margin-top:6px}.xlf-token input{font-family:var(--font-monospace);font-size:var(--font-ui-smaller);width:min(320px,40vw)}`;
 class BridgeSettings extends PluginSettingTab {
   constructor(app:Plugin['app'],private plugin:XLearningFeed){super(app,plugin);}
   display() {
-    const {containerEl}=this;containerEl.empty();containerEl.createEl('h2',{text:'X Learning Feed'});
-    containerEl.createEl('p',{text:t('ob.status',{state:this.plugin.state})});
-    containerEl.createEl('p',{text:t('ob.intro')});
+    const {containerEl}=this;containerEl.empty();
+    containerEl.createEl('style',{text:settingsStyle});
+    const hero=containerEl.createDiv({cls:'xlf-hero'});hero.createDiv({cls:'xlf-mark',text:'✦',attr:{'aria-hidden':'true'}});
+    const intro=hero.createDiv();intro.createEl('h2',{text:'X Learning Feed'});intro.createEl('p',{text:t('ob.intro')});
+    const running=!!this.plugin.server;
+    const server=new Setting(containerEl).setName(t('ob.server')).setDesc(createFragment(desc=>{
+      desc.createSpan({cls:'xlf-status',text:this.plugin.state,attr:{'data-state':running?'running':'message' in this.plugin.status?'error':'idle'}});
+      desc.createSpan({cls:'xlf-port',text:t('ob.port',{port:this.plugin.settings.port})});
+    }));
+    if(!running)server.addButton(button=>button.setButtonText(t('ob.retry')).setCta().onClick(async()=>{try{await this.plugin.start();}catch(error){this.plugin.state=(error as Error).message;}this.display();}));
+    new Setting(containerEl).setName(t('ob.heading.connection')).setHeading();
+    new Setting(containerEl).setName(t('ob.token')).setDesc(t('ob.token.desc')).setClass('xlf-token')
+      .addText(text=>{text.setValue(this.plugin.settings.token);text.inputEl.readOnly=true;text.inputEl.addEventListener('focus',()=>text.inputEl.select());})
+      .addButton(button=>button.setButtonText(t('ob.copy')).setTooltip(t('ob.copyToken')).setCta().onClick(async()=>{await navigator.clipboard.writeText(this.plugin.settings.token);new Notice(t('ob.copied'));}));
+    new Setting(containerEl).setName(t('ob.heading.general')).setHeading();
     new Setting(containerEl).setName(t('ob.language')).setDesc(t('ob.language.desc')).addDropdown(dropdown=>dropdown.addOption('auto',t('ob.language.auto')).addOption('zh','中文').addOption('en','English').setValue(this.plugin.settings.language??'auto').onChange(async value=>{
       this.plugin.settings.language=value as LocalePreference;await this.plugin.saveData(this.plugin.settings);this.plugin.applyLanguage();this.display();
     }));
-    new Setting(containerEl).setName(t('ob.token')).setDesc(t('ob.token.desc')).addText(text=>{text.setValue(this.plugin.settings.token);text.inputEl.readOnly=true;});
-    new Setting(containerEl).setName(t('ob.copyToken')).addButton(button=>button.setButtonText(t('ob.copy')).onClick(async()=>{await navigator.clipboard.writeText(this.plugin.settings.token);new Notice(t('ob.copied'));}));
-    containerEl.createEl('p',{text:t('ob.port',{port:this.plugin.settings.port})});
-    new Setting(containerEl).setName(t('ob.retry')).addButton(button=>button.setButtonText(t('ob.start')).onClick(async()=>{try{await this.plugin.start();}catch(error){this.plugin.state=(error as Error).message;}this.display();}));
   }
 }

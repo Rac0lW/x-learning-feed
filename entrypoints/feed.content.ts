@@ -2,10 +2,11 @@ import { defineContentScript } from 'wxt/utils/define-content-script';
 import { browser } from 'wxt/browser';
 import { Timeline } from '../lib/timeline';
 import { t } from '../lib/i18n';
+import { matches } from '../lib/sites';
 export default defineContentScript({
-  matches: ['https://x.com/*'],
+  matches,
   main(ctx) {
-    const timeline = new Timeline(document,(type,noteId,rating,edit)=>browser.runtime.sendMessage({type,noteId,...edit,...(rating!==undefined?{rating}:{})}),noteId=>{void browser.runtime.sendMessage({type:'shown',noteId}).catch(()=>{});});
+    const timeline = new Timeline(document,(type,noteId,rating,extra)=>browser.runtime.sendMessage({type,noteId,...extra,...(rating!==undefined?{rating}:{})}),noteId=>{void browser.runtime.sendMessage({type:'shown',noteId}).catch(()=>{});});
     let scheduled = false;
     let version: unknown;
     let panel: HTMLElement | undefined;
@@ -17,7 +18,7 @@ export default defineContentScript({
       panel.style.cssText='position:fixed;top:12px;right:12px;width:min(370px,calc(100vw - 24px));height:min(560px,calc(100dvh - 24px));z-index:2147483647;';
       const shadow=panel.attachShadow({mode:'closed'});
       const style=document.createElement('style');
-      style.textContent=':host{color-scheme:light dark}iframe{display:block;width:100%;height:100%;border:1px solid #8884;border-radius:12px;background:light-dark(#fff,#242328);box-sizing:border-box;box-shadow:0 8px 32px #0003}button{position:absolute;right:10px;top:10px;width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:light-dark(#746f7e,#aaa4b6);font:20px/1 system-ui;cursor:pointer}button:hover{background:#8882}button:focus-visible{outline:2px solid #7452ce}@media(prefers-reduced-motion:no-preference){iframe{animation:slide-in .15s ease-out}@keyframes slide-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}}';
+      style.textContent=':host{color-scheme:light dark}iframe{display:block;width:100%;height:100%;border:1px solid light-dark(#0000001a,#ffffff1f);border-radius:16px;background:light-dark(#fff,#222126);box-sizing:border-box;box-shadow:0 2px 6px #0000001a,0 16px 48px #0000003d}button{position:absolute;right:12px;top:12px;width:28px;height:28px;border:0;border-radius:50%;background:transparent;color:light-dark(#746f7e,#aaa4b6);font:20px/1 system-ui;cursor:pointer}button:hover{background:#8882}button:focus-visible{outline:2px solid #7452ce}@media(prefers-reduced-motion:no-preference){iframe{animation:slide-in .18s cubic-bezier(.2,.8,.2,1)}@keyframes slide-in{from{opacity:0;transform:translateY(-8px) scale(.98)}to{opacity:1;transform:none}}}';
       frame=document.createElement('iframe');frame.src=browser.runtime.getURL('/panel.html');frame.title=t('panel.frame');
       const close=document.createElement('button');close.type='button';close.textContent='×';close.setAttribute('aria-label',t('panel.close'));close.addEventListener('click',closePanel);
       shadow.append(style,frame,close);document.body.append(panel);

@@ -1,18 +1,21 @@
 import { browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import { readNotes, readState, saveNotes, replaceSource, pending, savePending, acknowledge, readFeedback, saveFeedback } from '../lib/db';
-import type { Note, Metadata, Operation, Settings, Rating, Pending } from '../lib/types';
+import type { Note, Metadata, Operation, Settings, Rating, Pending, Mode } from '../lib/types';
 import { reviewMetadata } from '../lib/review';
+import { siteFor } from '../lib/sites';
 import { t, setLocale, resolveLocale, isPreference, type Locale } from '../lib/i18n';
 
+const isMode=(value:unknown):value is Mode=>value==='learn' || value==='browse';
 function validMetadata(value:unknown):value is Metadata {
   const m=value as Metadata|undefined;
+  if(m && m.mode!==undefined && !isMode(m.mode))return false;
   if(m && (m.rating!==undefined && m.rating!==null && ![1,2,3,4].includes(m.rating) || m.intervalDays!==undefined && (!Number.isFinite(m.intervalDays) || m.intervalDays<0 || m.intervalDays>36500) || m.nextReview!==undefined && m.nextReview!==null && (typeof m.nextReview!=='string' || !Number.isFinite(Date.parse(m.nextReview)))))return false;
   return !!m && Number.isSafeInteger(m.reviewCount) && m.reviewCount>=0 && (m.lastReviewed===null || typeof m.lastReviewed==='string' && Number.isFinite(Date.parse(m.lastReviewed))) && typeof m.remarks==='string' && m.remarks.length<=4000 && /^[a-f0-9]{64}$/.test(m.version);
 }
 function withPendingReviews(note:Note,outbox:Pending[]):Note {
   if(!note.metadata)return note;
-  return {...note,metadata:outbox.filter(op=>op.noteId===note.id && op.type==='review' && op.status==='pending').reduce((metadata,op)=>reviewMetadata(metadata,op.reviewedAt!,op.rating),note.metadata)};
+  return {...note,metadata:outbox.filter(op=>op.noteId===note.id && (op.type==='review' || op.type==='mode') && op.status==='pending').reduce((metadata,op)=>op.type==='mode'?{...metadata,mode:op.mode}:reviewMetadata(metadata,op.reviewedAt!,op.rating),note.metadata)};
 }
 function validNote(value:unknown):value is Note {
   const n=value as Note|undefined;
@@ -80,7 +83,7 @@ export default defineBackground(() => {
         if(!s || !Number.isInteger(s.every) || s.every<1 || s.every>100 || typeof s.enabled!=='boolean')throw new Error(t('bg.invalidMcp'));
         const known=new Set((await readNotes()).map(n=>n.id));const added=feed.notes.filter((n:Note)=>!known.has(n.id));
         if(added.length){await saveNotes(added);changed=true;}
-        if(config.revision!==s.revision){await browser.storage.local.set({settings:{every:s.every,enabled:s.enabled,timeWeight:(config.settings as Settings|undefined)?.timeWeight!==false},revision:s.revision});changed=true;}
+        if(config.revision!==s.revision){await browser.storage.local.set({settings:{every:s.every,enabled:s.enabled,timeWeight:(config.settings as Settings|undefined)?.timeWeight!==false,...((config.settings as Settings|undefined)?.mode?{mode:(config.settings as Settings).mode}:{})},revision:s.revision});changed=true;}
       }
       if(changed)await bump();
       await browser.storage.local.set({syncStatus:'已同步',lastSync:new Date().toISOString()});
@@ -90,8 +93,8 @@ export default defineBackground(() => {
     }).finally(()=>{syncing=undefined;});
     return syncing;
   }
-  async function queue(message:{type:string;noteId:string;metadata?:Metadata;rating?:Rating;markdown?:string;expectedVersion?:string},sender:{url?:string}) {
-    if(!sender.url?.startsWith('https://x.com/') && !sender.url?.startsWith(browser.runtime.getURL('/')))throw new Error(t('bg.badOrigin'));
+  async function queue(message:{type:string;noteId:string;metadata?:Metadata;rating?:Rating;markdown?:string;expectedVersion?:string;mode?:Mode},sender:{url?:string}) {
+    if(!siteFor(sender.url) && !sender.url?.startsWith(browser.runtime.getURL('/')))throw new Error(t('bg.badOrigin'));
     if(message.type==='shown'){
       if(typeof message.noteId!=='string' || !/^[a-f0-9]{64}$/.test(message.noteId))throw new Error(t('bg.noNote'));
       const ids=await shownToday();
@@ -129,13 +132,18 @@ export default defineBackground(() => {
       operation={...base,type:'edit',markdown:message.markdown,expectedVersion:message.expectedVersion};
     }
     else if(message.type==='archive')operation={...base,type:'archive'};
+    else if(message.type==='mode'){
+      if(!isMode(message.mode))throw new Error(t('bg.badMode'));
+      operation={...base,type:'mode',mode:message.mode};
+    }
     else{
       if(!validMetadata(message.metadata))throw new Error(t('bg.badMetadata'));
       if((await pending()).some(op=>op.noteId===note.id))throw new Error(t('bg.metadataPending'));
       const {version,...metadata}=message.metadata;
       operation={...base,type:'metadata',expectedVersion:version,metadata};
     }
-    const projected=operation.type==='review'?reviewMetadata(withPendingReviews(note,state.pending).metadata!,operation.reviewedAt!,operation.rating):undefined;
+    const current=withPendingReviews(note,state.pending).metadata!;
+    const projected=operation.type==='review'?reviewMetadata(current,operation.reviewedAt!,operation.rating):operation.type==='mode'?{...current,mode:operation.mode}:undefined;
     await savePending({...operation,status:'pending'});await bump();
     // A new operation may arrive after the active sync has already read its queue.
     if(syncing)void syncing.catch(()=>{}).then(()=>sync()).catch(()=>{});
@@ -167,7 +175,7 @@ export default defineBackground(() => {
           const s=settings as Settings|undefined;
           return{notes:snapshot.notes.filter(n=>!archived.has(n.id) && (peer ? n.source===peer : !n.source) && !!n.roam===(s?.tags!==undefined) && (!s?.tags || s.tags.some(tag=>n.tags?.includes(tag)))).map(n=>({...withPendingReviews(n,outbox),feedback:feedback.get(n.id)??0})),settings:{timeWeight:true,...(settings??{every:10,enabled:true})},version,pending:outbox,locale,shown:await shownToday()};
         }
-        if(message.type==='shown' || message.type==='review' || message.type==='metadata' || message.type==='archive' || message.type==='like' || message.type==='dislike' || message.type==='open' || message.type==='document' || message.type==='edit'){
+        if(message.type==='shown' || message.type==='review' || message.type==='metadata' || message.type==='archive' || message.type==='like' || message.type==='dislike' || message.type==='open' || message.type==='document' || message.type==='edit' || message.type==='mode'){
           const next=queuing.then(()=>queue(message,sender));queuing=next.catch(()=>{});return await next;
         }
         if(!sender.url?.startsWith(browser.runtime.getURL('/')))throw new Error(t('bg.settingsOnly'));
@@ -185,6 +193,7 @@ export default defineBackground(() => {
           const {roam:_,...s}:Settings&{roam?:unknown}=message.settings??{};
           if(!s || !Number.isInteger(s.every) || s.every<1 || s.every>100 || typeof s.enabled!=='boolean')throw new Error(t('bg.invalidSettings'));
           if(s.timeWeight!==undefined && typeof s.timeWeight!=='boolean')throw new Error(t('bg.badTimeWeight'));
+          if(s.mode!==undefined && !isMode(s.mode))throw new Error(t('bg.badMode'));
           if(s.tags!==undefined && (!Array.isArray(s.tags) || s.tags.length<1 || s.tags.length>20 || !s.tags.every(tag=>typeof tag==='string' && tag.length<=100 && /^[\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*$/u.test(tag))))throw new Error(t('bg.badTags'));
           const previous=await browser.storage.local.get('settings');
           await browser.storage.local.set({settings:s});await bump();

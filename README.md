@@ -12,7 +12,7 @@ The Obsidian plugin and browser extension are the recommended setup. No X API, p
 
 ## Installation
 
-The current version is **0.9.1**. Build from source and install manually. You need desktop Obsidian, Chrome or Edge, and Node.js 22.13 or newer. The browser extension and the Obsidian plugin are available in English and Chinese. By default they follow the browser and Obsidian language; you can switch under Language in the extension panel and in the plugin settings. The steps below also give the Chinese labels.
+The current version is **0.12.2**. Build from source and install manually. You need desktop Obsidian, Chrome or Edge, and Node.js 22.13 or newer. The browser extension and the Obsidian plugin are available in English and Chinese. By default they follow the browser and Obsidian language; you can switch under Language in the extension panel and in the plugin settings. The steps below also give the Chinese labels.
 
 ### 1. Download and build
 
@@ -76,6 +76,17 @@ Custom tag selection reads the whole vault and filters locally in the browser, s
 Browsing custom-tag notes does not add properties in bulk. A review, archive, or saved edit adds the identity needed for writeback. Until then, unmarked notes use an identity derived from their path, so renaming one gives it a new identity. Cards show folders and the filename in a source tree at the top.
 
 `#no-x-feed` excludes a note in every mode. Archive (`归档`) adds `no-x-feed` to the original note's `tags` property and immediately removes the card. Existing tags, body text, and review counts are preserved. Offline archives are queued locally. Remove the exclusion tag in Obsidian to make the note eligible again.
+
+## Learn and browse
+
+Each card is in one of two modes. The panel's **Mode** (`推送方式`) sets the default, which is Browse (`浏览`). Set `xfeed_mode: learn` or `xfeed_mode: browse` in a note's properties to override it for that note. Values other than these two are ignored.
+
+| Mode | Card | Schedule |
+| --- | --- | --- |
+| Learn | The body stays hidden until you click Show note (`显示全文`), so you try to recall it first. Then grade it with Again, Hard, Good, or Easy; each button shows its next interval. | Waits until the review date below. |
+| Browse | Shows the body with Seen (`看过了`), Learn (`学习`), Like, and Dislike. Seen records one review and removes the card. | Ignores the review date; time and feedback weights decide when it returns. |
+
+Learn on a browse card writes `xfeed_mode: learn` to the note and turns the card into a learning card that is ready to grade. Browse only (`改为浏览`) on a learning card writes `xfeed_mode: browse`. Both cards also show Open in Obsidian, Edit here, and Archive.
 
 ## Reviews and weights
 

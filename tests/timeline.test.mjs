@@ -237,3 +237,38 @@ test('字数降权适用于推送顺序，忽略空白、标记和图片，按�
   timeline.update({notes:[changed,short],settings:{every:1,enabled:true,timeWeight:false}});main.append(cell(2));timeline.used.clear();timeline.reconcile();
   assert.equal(timeline.assignments.get('2'),long.id);timeline.clear();
 });
+
+test('站点适配器只匹配已支持网站的完整来源',async()=>{
+  const { siteFor, matches } = await import('../.test-dist/sites.js');
+  assert.equal(siteFor('https://x.com/home')?.origin,'https://x.com');
+  for (const url of ['https://x.com.evil.example/home','http://x.com/home','https://evil.example/?https://x.com/',undefined,'not a url']) assert.equal(siteFor(url),undefined);
+  assert.deepEqual(matches,['https://x.com/*']);
+});
+
+test('浏览卡片：看过了只记一次浏览，点学习写入模式并转成可打分的学习卡；浏览不受到期限制',async()=>{
+  const main=document.querySelector('main');main.replaceChildren(cell(1),cell(2));
+  const attach=dom.window.Element.prototype.attachShadow;const roots=[];
+  dom.window.Element.prototype.attachShadow=function(options){const root=attach.call(this,options);roots.push(root);return root;};
+  const sent=[];const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
+  const metadata={reviewCount:1,lastReviewed:new Date().toISOString(),remarks:'',version:'a'.repeat(64),rating:3,intervalDays:3,nextReview:new Date(Date.now()+3*86400000).toISOString()};
+  const notes=[{...note('a'),metadata},{...note('b'),metadata:{...metadata,mode:'learn'}}];
+  const timeline=new Timeline(document,async(type,noteId,rating,extra)=>{sent.push({type,noteId,rating,extra});return{ok:true};});
+  try{
+    timeline.update({notes,settings:{every:1,enabled:true,mode:'browse'}});timeline.reconcile();
+    assert.equal(timeline.assignments.get('1'),note('a').id,'Browsing ignores the review date');
+    assert.equal(timeline.assignments.has('2'),false,'A note marked xfeed_mode: learn still waits until due');
+    const root=roots.at(-1);const button=text=>[...root.querySelectorAll('button')].find(b=>b.textContent===text);
+    assert.equal(root.querySelector('section').dataset.mode,'browse');assert.equal(root.querySelector('small').textContent,'浏览 · Obsidian');
+    assert.equal(root.querySelector('.familiarity'),null);assert.equal(root.querySelector('.recall'),null);
+    button('学习').click();await tick();
+    assert.deepEqual(sent[0],{type:'mode',noteId:note('a').id,rating:undefined,extra:{mode:'learn'}});
+    const learning=roots.at(-1);assert.notEqual(learning,root);
+    assert.equal(learning.querySelector('section').dataset.mode,'learn');assert.equal(learning.querySelector('.familiarity').hidden,false,'A note switched while reading opens ready to grade');
+    assert.equal(document.querySelectorAll('x-learning-card').length,1);
+    timeline.reconcile();assert.equal(document.querySelectorAll('x-learning-card').length,1,'The new card is kept, not redrawn');
+    main.replaceChildren(cell(3));timeline.update({notes:[note('c')].map(n=>({...n,metadata:{...metadata,nextReview:null}})),settings:{every:1,enabled:true,mode:'browse'}});timeline.reconcile();
+    [...roots.at(-1).querySelectorAll('button')].find(b=>b.textContent==='看过了').click();await tick();
+    assert.deepEqual(sent[1],{type:'review',noteId:note('c').id,rating:undefined,extra:undefined});
+    assert.equal(document.querySelectorAll('x-learning-card').length,0);
+  }finally{dom.window.Element.prototype.attachShadow=attach;timeline.clear();}
+});

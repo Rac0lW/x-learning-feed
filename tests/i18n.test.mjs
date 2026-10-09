@@ -26,10 +26,15 @@ test('构建后的卡片：按扩展语言显示英文，切换语言后重绘',
   const frame=()=>new Promise(resolve=>setTimeout(resolve,50));await frame();
   const root=()=>roots.get(w.document.querySelector('x-learning-card'));
   const buttons=()=>[...root().querySelectorAll('footer button')].map(b=>b.textContent);
-  assert.deepEqual(buttons(),['Expand','Open in Obsidian','Edit here','Like','Dislike','Archive','Again','Hard','Good','Easy']);
+  assert.deepEqual(buttons(),['Expand','Seen','Learn','Like','Dislike','Open in Obsidian','Edit here','Archive'],'Cards default to browsing');
+  feed={...feed,version:'learn',settings:{...feed.settings,mode:'learn'}};refresh();await frame();
+  assert.deepEqual(buttons(),['Again','Hard','Good','Easy','Open in Obsidian','Edit here','Like','Dislike','Browse only','Archive']);
+  assert.equal(root().querySelector('.recall button').textContent,'Show note');assert.equal(root().querySelector('[data-rating="3"]').dataset.when,'3 days');
   assert.equal(root().querySelector('.summary').textContent,'Reviewed 1 time');
   feed={...feed,version:'two',locale:'zh'};refresh();await frame();
-  assert.deepEqual(buttons(),['展开','在 Obsidian 中打开','现场编辑','点赞','点踩','归档','重来','困难','良好','简单']);
+  assert.deepEqual(buttons(),['重来','困难','良好','简单','在 Obsidian 中打开','现场编辑','点赞','点踩','改为浏览','归档']);
+  feed={...feed,version:'three',settings:{...feed.settings,mode:'browse'}};refresh();await frame();
+  assert.deepEqual(buttons(),['展开','看过了','学习','点赞','点踩','在 Obsidian 中打开','现场编辑','归档']);
 });
 
 test('网页内面板：英文界面与语言切换',async t=>{

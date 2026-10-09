@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import type { Feed } from '../../lib/types';
 import { t, setLocale, getLocale, resolveLocale, formatDate, type Key } from '../../lib/i18n';
+import { sites } from '../../lib/sites';
 import panel from './panel.html?raw';
 import './style.css';
 
@@ -12,13 +13,16 @@ function translate(){
   for(const node of document.querySelectorAll<HTMLElement>('[data-i18n-aria-label]'))node.setAttribute('aria-label',t(node.dataset.i18nAriaLabel as Key));
 }
 if(window.parent!==window)document.addEventListener('keydown',event=>{
-  if(event.key==='Escape')window.parent.postMessage('x-learning-feed:close','https://x.com');
+  if(event.key!=='Escape')return;
+  const parent=location.ancestorOrigins?.[0];
+  if(parent && sites.some(site=>site.origin===parent))window.parent.postMessage('x-learning-feed:close',parent);
 });
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const enabled = element<HTMLInputElement>('enabled');
 const every = element<HTMLInputElement>('every');
 const timeWeight = element<HTMLInputElement>('time-weight');
 const tagMode = element<HTMLInputElement>('tag-mode');
+const modes = [...document.querySelectorAll<HTMLInputElement>('input[name=mode]')];
 const tags = element<HTMLInputElement>('tags');
 const token = element<HTMLInputElement>('token');
 const port = element<HTMLInputElement>('port');
@@ -35,6 +39,7 @@ async function refresh() {
   if(document.activeElement!==enabled)enabled.checked = feed.settings.enabled;
   if(document.activeElement!==every)every.value = String(feed.settings.every);
   if(document.activeElement!==timeWeight)timeWeight.checked=feed.settings.timeWeight!==false;
+  if(!modes.includes(document.activeElement as HTMLInputElement))for(const mode of modes)mode.checked=mode.value===(feed.settings.mode??'browse');
   if(document.activeElement!==tagMode)tagMode.checked=feed.settings.tags!==undefined;
   if(document.activeElement!==tags)tags.value=feed.settings.tags?.join(', ')??'x-feed';
   tags.disabled=!tagMode.checked;
@@ -77,7 +82,7 @@ settings.addEventListener('change',async event=>{
   if(!every.reportValidity())return;
   if(tagMode.checked && !tags.reportValidity())return;
   const selected=[...new Set(tags.value.split(/[\s,，]+/).map(tag=>tag.replace(/^#/,'')).filter(Boolean))];
-  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),timeWeight:timeWeight.checked,...(tagMode.checked?{tags:selected}:{})}});status(t('panel.settingsSaved'));}
+  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),timeWeight:timeWeight.checked,mode:modes.find(mode=>mode.checked)?.value??'browse',...(tagMode.checked?{tags:selected}:{})}});status(t('panel.settingsSaved'));}
   catch(error){status((error as Error).message);}
 });
 settings.addEventListener('submit',event=>event.preventDefault());

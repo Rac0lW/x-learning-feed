@@ -45,7 +45,7 @@ test('构建后的卡片：展开、复习与归档，写回失败可重试，�
   const dom=new JSDOM('<main data-testid="primaryColumn"><div data-testid="cellInnerDiv"><article data-testid="tweet"><a href="/u/status/1"><time>今天</time></a></article></div></main>',{url:'https://x.com/home',runScripts:'dangerously',pretendToBeVisual:true});
   t.after(()=>dom.window.close());const w=dom.window;let refresh;const sent=[];
   w.setInterval=callback=>{refresh=callback;return 1;};w.clearInterval=()=>{};
-  let feed={notes:[{id:'a'.repeat(64),source:'b'.repeat(64),path:'学习/推荐系统/Obsidian 文章.md',title:'Obsidian 文章',html:'<p>正文</p>',metadata:{reviewCount:2,lastReviewed:'2026-10-07T09:20:33.123Z',remarks:'原备注',version:'c'.repeat(64)}}],settings:{every:1,enabled:true},version:'one'};
+  let feed={notes:[{id:'a'.repeat(64),source:'b'.repeat(64),path:'学习/推荐系统/Obsidian 文章.md',title:'Obsidian 文章',html:'<p>正文</p>',metadata:{reviewCount:2,lastReviewed:'2026-10-07T09:20:33.123Z',remarks:'原备注',version:'c'.repeat(64)}}],settings:{every:1,enabled:true,mode:'learn'},version:'one'};
   let failArchive=true;
   w.chrome={runtime:{id:'test',onMessage:{addListener:()=>{},removeListener:()=>{}},getURL:path=>`chrome-extension://test${path}`,sendMessage:async message=>{if(message.type==='feed')return feed;if(message.type==='shown')return{ok:true};sent.push(message);if(message.type==='archive' && failArchive){failArchive=false;return{error:'未连接，请重试'};}return{ok:true,pending:true};}}};
   const roots=new WeakMap();const attach=w.Element.prototype.attachShadow;
@@ -55,14 +55,16 @@ test('构建后的卡片：展开、复习与归档，写回失败可重试，�
   const root=()=>roots.get(w.document.querySelector('x-learning-card'));
   assert.equal(root().querySelector('.source').title,feed.notes[0].path);
   assert.equal(root().querySelectorAll('.source li').length,3);
-  assert.deepEqual([...root().querySelectorAll('footer button')].map(b=>b.textContent),['展开','在 Obsidian 中打开','现场编辑','点赞','点踩','归档','重来','困难','良好','简单']);
+  assert.deepEqual([...root().querySelectorAll('footer button')].map(b=>b.textContent),['重来','困难','良好','简单','在 Obsidian 中打开','现场编辑','点赞','点踩','改为浏览','归档']);
   assert.equal(root().querySelector('textarea').parentElement.hidden,true);
-  root().querySelector('footer button').click();
+  assert.equal(root().querySelector('.body').hidden,true,'Learning cards hide the body until you try to recall it');
+  assert.equal(root().querySelector('.familiarity').hidden,true);assert.equal(root().querySelector('.more-toggle'),null,'Every action is shown without a menu');
+  root().querySelector('.recall button').click();
   feed={...feed,notes:[{...feed.notes[0],metadata:{...feed.notes[0].metadata,reviewCount:3,version:'d'.repeat(64)}}],version:'two'};
   refresh();await frame();
   assert.ok(root().querySelector('.summary').textContent.includes('已复习 3 次'));
-  assert.equal(root().querySelector('footer button').textContent,'收起');
-  assert.deepEqual([...root().querySelectorAll('footer button')].map(b=>b.textContent),['收起','在 Obsidian 中打开','现场编辑','点赞','点踩','归档','重来','困难','良好','简单']);
+  assert.equal(root().querySelector('.body').hidden,false,'Revealing survives a redraw');assert.equal(root().querySelector('.recall').hidden,true);
+  assert.equal(root().querySelector('.familiarity').hidden,false);
   assert.equal(sent.length,0);
   const archive=()=>[...root().querySelectorAll('button')].find(b=>b.textContent==='归档');
   archive().click();await frame();assert.ok(root());assert.equal(archive().disabled,false);
@@ -76,7 +78,7 @@ test('构建后的卡片：打开 Obsidian 与熟悉度评分，失败可重试�
   const dom=new JSDOM('<main data-testid="primaryColumn"><div data-testid="cellInnerDiv"><article data-testid="tweet"><a href="/u/status/1"><time>今天</time></a></article></div></main>',{url:'https://x.com/home',runScripts:'dangerously',pretendToBeVisual:true});
   t.after(()=>dom.window.close());const w=dom.window;const sent=[];
   w.setInterval=()=>1;w.clearInterval=()=>{};
-  const feed={notes:[{id:'a'.repeat(64),source:'b'.repeat(64),path:'学习/文章.md',title:'文章',html:'<p>正文</p>',metadata:{reviewCount:0,lastReviewed:null,remarks:'',version:'c'.repeat(64)}}],settings:{every:1,enabled:true}};
+  const feed={notes:[{id:'a'.repeat(64),source:'b'.repeat(64),path:'学习/文章.md',title:'文章',html:'<p>正文</p>',metadata:{reviewCount:0,lastReviewed:null,remarks:'',version:'c'.repeat(64)}}],settings:{every:1,enabled:true,mode:'learn'}};
   let fail=true;
   w.chrome={runtime:{id:'test',onMessage:{addListener:()=>{},removeListener:()=>{}},getURL:p=>`chrome-extension://test${p}`,sendMessage:async message=>{if(message.type==='feed')return feed;if(message.type==='shown')return{ok:true};sent.push(message);return message.type==='review' && fail?{error:'暂时无法保存'}:{ok:true};}}};
   let root;const attach=w.Element.prototype.attachShadow;w.Element.prototype.attachShadow=function(options){root=attach.call(this,options);return root;};
