@@ -2,7 +2,7 @@ import { Plugin, PluginSettingTab, Setting, Notice, TFile, getAllTags } from 'ob
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { render } from '../src/render';
-import { BridgeError, operationSchema, splitNote, hasTag, excluded, ensureIdentity, readMetadata, applyOperation } from './core';
+import { BridgeError, operationSchema, openSchema, bodyVersion, splitNote, hasTag, excluded, ensureIdentity, readMetadata, applyOperation, readTags } from './core';
 import type { Note } from '../lib/types';
 
 type Config = {token:string;source:string;port:number};
@@ -56,11 +56,11 @@ export default class XLearningFeed extends Plugin {
       if(fresh && !archiveId && excluded(cached.content))continue;
       if(fresh && (roam || hasTag(cached.content,'x-feed'))){
         if(files.has(cached.note.id))throw new BridgeError(409,`两篇笔记的 xfeed_id 相同：${file.basename}`);
-        files.set(cached.note.id,file);notes.push({...cached.note,...(roam?{roam:true}:{})});continue;
+        files.set(cached.note.id,file);notes.push({...cached.note,tags:readTags(cached.content,cache?getAllTags(cache)??[]:[]),...(roam?{roam:true}:{})});continue;
       }
       let content=contents.get(file.path)??await this.app.vault.read(file);
       if (!archiveId && excluded(content) || !roam && !hasTag(content,'x-feed')) continue;
-      if (!roam && !splitNote(content).frontmatter.xfeed_id) content=await this.app.vault.process(file,data => ensureIdentity(data,randomBytes(32).toString('hex')));
+      if (!roam && !splitNote(content).frontmatter.xfeed_id) content=await this.app.vault.process(file,data => ensureIdentity(data,createHash('sha256').update(`${this.settings.source}:${file.path}`).digest('hex')));
       if (!archiveId && excluded(content) || !roam && !hasTag(content,'x-feed')) continue;
       const {frontmatter,body}=splitNote(content);
       // Roaming is read-only until the user actually records a review.
@@ -68,12 +68,12 @@ export default class XLearningFeed extends Plugin {
       if (typeof id!=='string' || !/^[a-f0-9]{64}$/.test(id)) throw new BridgeError(422,`xfeed_id 格式错误：${file.basename}`);
       if (files.has(id)) throw new BridgeError(409,`两篇笔记的 xfeed_id 相同：${file.basename}。请删除副本的 xfeed_id 后重试。`);
       files.set(id,file);
-      const note={id,title:file.basename.slice(0,200),html:render(body,'markdown'),source:this.settings.source,path:file.path,metadata:readMetadata(frontmatter)};
+      const note={id,title:file.basename.slice(0,200),html:render(body,'markdown'),source:this.settings.source,path:file.path,metadata:readMetadata(frontmatter),tags:readTags(content,cache?getAllTags(cache)??[]:[])};
       if(Number.isFinite(file.stat.mtime))this.cache.set(file.path,{mtime:file.stat.mtime,size:file.stat.size,content,note});
       notes.push({...note,...(roam?{roam:true}:{})});
     }
     this.files=files;
-    return {source:this.settings.source,notes,roam};
+    return {source:this.settings.source,notes,roam,tagSelection:true,reviewScheduling:true,openInObsidian:true,inlineEditing:true};
   }
   private async handle(req:IncomingMessage,res:ServerResponse) {
     const send=(status:number,value:unknown) => {if(!res.destroyed)res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}).end(JSON.stringify(value));};
@@ -81,12 +81,25 @@ export default class XLearningFeed extends Plugin {
     if (req.headers.host!==`127.0.0.1:${this.settings.port}` || (req.headers.origin && !/^chrome-extension:\/\//.test(req.headers.origin)) || supplied.length!==expected.length || !timingSafeEqual(supplied,expected)) {send(403,{error:'连接令牌或请求来源错误'});return;}
     try {
       if (req.method==='GET' && (req.url==='/feed' || req.url==='/feed?roam=1')) {send(200,await this.serialized(()=>this.feed(req.url==='/feed?roam=1')));return;}
-      if (req.method!=='POST' || req.url!=='/metadata') {send(404,{error:'接口不存在'});return;}
+      if (req.method!=='POST' || !['/metadata','/open','/document'].includes(req.url??'')) {send(404,{error:'接口不存在'});return;}
       if (!req.headers['content-type']?.startsWith('application/json')) throw new BridgeError(415,'必须发送 JSON');
       const chunks:Buffer[]=[];let bytes=0;
-      for await (const chunk of req) {bytes+=chunk.length;if(bytes>32768)throw new BridgeError(413,'元数据请求过大');chunks.push(chunk);}
+      for await (const chunk of req) {bytes+=chunk.length;if(bytes>(req.url==='/metadata'?16*1024*1024:32768))throw new BridgeError(413,'元数据请求过大');chunks.push(chunk);}
       let input:unknown;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new BridgeError(400,'JSON 格式错误');}
-      const parsed=operationSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'仅允许复习记录和归档；请求格式错误');
+      if(req.url==='/open' || req.url==='/document'){
+        const parsed=openSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'打开笔记请求格式错误');
+        const op=parsed.data;if(op.source!==this.settings.source)throw new BridgeError(409,'连接的笔记库已变化');
+        const document=await this.serialized(async()=>{
+          await this.feed(op.roam===true);const file=this.files.get(op.noteId);if(!file)throw new BridgeError(409,'文章已移除或删除，请重新同步');
+          if(req.url==='/document'){const {body}=splitNote(await this.app.vault.read(file));return{markdown:body,version:bodyVersion(body)};}
+          await this.app.workspace.getLeaf(false).openFile(file,{active:true,state:{mode:'source'}});
+          const remote=require('electron').remote;const window=remote.getCurrentWindow();
+          if(window.isMinimized())window.restore();
+          window.show();remote.app.focus({steal:true});window.focus();
+        });
+        send(200,document??{opened:op.noteId});return;
+      }
+      const parsed=operationSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'写回请求格式错误');
       const operation=parsed.data;
       if (operation.source!==this.settings.source) throw new BridgeError(409,'连接的笔记库已变化，请重新连接');
       const note=await this.serialized(async () => {
@@ -95,7 +108,8 @@ export default class XLearningFeed extends Plugin {
         const content=await this.app.vault.process(file,data => applyOperation(ensureIdentity(data,operation.noteId,operation.roam===true),operation));
         if(operation.type!=='archive')this.cache.delete(file.path);
         if(operation.type==='archive')return undefined;
-        return {id:operation.noteId,title:file.basename.slice(0,200),html:render(splitNote(content).body,'markdown'),source:this.settings.source,path:file.path,metadata:readMetadata(splitNote(content).frontmatter),...(operation.roam?{roam:true}:{})};
+        const cache=this.app.metadataCache.getFileCache(file);
+        return {id:operation.noteId,title:file.basename.slice(0,200),html:render(splitNote(content).body,'markdown'),source:this.settings.source,path:file.path,metadata:readMetadata(splitNote(content).frontmatter),tags:readTags(content,cache?getAllTags(cache)??[]:[]),...(operation.roam?{roam:true}:{})};
       });
       send(200,note?{note}:{archived:operation.noteId});
     } catch(error) {send(error instanceof BridgeError ? error.status : 500,{error:error instanceof BridgeError ? error.message : '同步失败，请检查 Obsidian 笔记属性或插件日志'});if(!(error instanceof BridgeError))console.error('X Learning Feed:',error);}

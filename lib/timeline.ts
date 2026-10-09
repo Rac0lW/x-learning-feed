@@ -1,17 +1,30 @@
-import { clean } from './render.js';
-import type { Feed, Note } from './types.js';
+import { clean, render } from './render.js';
+import type { Feed, Note, Rating, Metadata } from './types.js';
+import { ratings, reviewMetadata, noteWeight } from './review.js';
 
 export class Timeline {
   seen = new Set<string>();
   used = new Set<string>();
   assignments = new Map<string,string>();
   expanded = new Set<string>();
+  private drafts=new Map<string,{markdown:string;version:string}>();
+  private editing=new Set<string>();
+  private lengths=new WeakMap<Note,number>();
+  private weight(note:Note,timeWeight:boolean){
+    let characters=this.lengths.get(note);
+    if(characters===undefined){
+      const template=this.document.createElement('template');template.innerHTML=note.html;
+      characters=Array.from((template.content.textContent??'').replace(/\s/gu,'')).length;
+      this.lengths.set(note,characters);
+    }
+    return noteWeight(note,timeWeight,Date.now(),characters);
+  }
   private versions=new WeakMap<HTMLElement,string>();
   feed: Feed = { notes:[], settings:{every:10,enabled:true} };
-  constructor(private document: Document, private change?:(type:'review'|'archive',noteId:string)=>Promise<{error?:string}>) {}
+  constructor(private document: Document, private change?:(type:'review'|'archive'|'like'|'dislike'|'open'|'document'|'edit',noteId:string,rating?:Rating,edit?:{markdown:string;expectedVersion:string})=>Promise<{error?:string;feedback?:-1|0|1;metadata?:Metadata;markdown?:string;version?:string}>) {}
   clear() { this.document.querySelectorAll('x-learning-card').forEach(n => n.remove()); }
   update(feed: Feed) {
-    const modeChanged=!!feed.settings.roam!==!!this.feed.settings.roam;
+    const modeChanged=!!feed.settings.roam!==!!this.feed.settings.roam || JSON.stringify(feed.settings.tags)!==JSON.stringify(this.feed.settings.tags);
     if(modeChanged){this.used.clear();this.expanded.clear();}
     if (feed.settings.every !== this.feed.settings.every || modeChanged || !this.feed.notes.length && feed.notes.length>0) {
       this.clear(); this.seen.clear(); this.assignments.clear();
@@ -22,6 +35,10 @@ export class Timeline {
     if (this.document.location.pathname !== '/home' || !this.feed.settings.enabled) { this.clear(); return; }
     const primary = this.document.querySelector('[data-testid="primaryColumn"]');
     if (!primary) { this.clear(); return; }
+    for(const [anchor,noteId] of this.assignments){
+      const due=this.feed.notes.find(n=>n.id===noteId)?.metadata?.nextReview;
+      if(due && Date.parse(due)>Date.now() && !this.editing.has(noteId)){this.assignments.delete(anchor);this.used.delete(noteId);}
+    }
     const cells = Array.from(primary.querySelectorAll('[data-testid="cellInnerDiv"]'));
     const visible = new Map<Element,string>();
     for (const cell of cells) {
@@ -34,8 +51,13 @@ export class Timeline {
       if (!this.seen.has(id)) {
         this.seen.add(id);
         if (this.seen.size % this.feed.settings.every === 0) {
-          const unused=this.feed.notes.filter(n => !this.used.has(n.id));
-          const note = this.feed.settings.roam ? unused[Math.floor(Math.random()*unused.length)] : unused[0];
+          const unused=this.feed.notes.filter(n => !this.used.has(n.id) && (!n.metadata?.nextReview || Date.parse(n.metadata.nextReview)<=Date.now()));
+          let note:Note|undefined;
+          const timeWeight=this.feed.settings.timeWeight!==false;
+          if(this.feed.settings.roam){
+            let draw=Math.random()*unused.reduce((sum,n)=>sum+this.weight(n,timeWeight),0);
+            note=unused.find(n=>{draw-=this.weight(n,timeWeight);return draw<0;});
+          }else note=unused.sort((a,b)=>this.weight(b,timeWeight)-this.weight(a,timeWeight))[0];
           if (note) { this.used.add(note.id); this.assignments.set(id,note.id); }
         }
       }
@@ -46,7 +68,7 @@ export class Timeline {
       const id = card.dataset.anchor!;
       const noteId = this.assignments.get(id);
       const note=this.feed.notes.find(n=>n.id===noteId);
-      if (!cell || visible.get(cell) !== id || !noteId || !note || this.versions.get(card)!==JSON.stringify([note,this.feed.pending?.filter(op=>op.noteId===noteId)]) || mounted.has(noteId)) card.remove();
+      if (!cell || visible.get(cell) !== id || !noteId || !note || !this.editing.has(noteId) && this.versions.get(card)!==JSON.stringify([note,this.feed.pending?.filter(op=>op.noteId===noteId)]) || mounted.has(noteId)) card.remove();
       else mounted.add(noteId);
     }
     for (const [cell,id] of visible) {
@@ -62,12 +84,26 @@ export class Timeline {
     host.style.display = 'block';
     const shadow = host.attachShadow({mode:'closed'});
     const style = this.document.createElement('style');
-    style.textContent = `:host{display:block;color:inherit;color-scheme:light dark}*{box-sizing:border-box}section{font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:20px 16px;border-top:1px solid #8883;overflow-wrap:anywhere}small{font-size:11px;font-weight:600;letter-spacing:.3px;color:#9674dc}h2{font-size:18px;line-height:1.4;letter-spacing:-.25px;margin:8px 0 12px}button{font:500 12px/1.4 system-ui;border:1px solid #8883;border-radius:6px;background:transparent;color:inherit;padding:7px 11px;cursor:pointer}button:hover{background:#8881}button:disabled{opacity:.5;cursor:wait}button:focus-visible{outline:2px solid #9674dc;outline-offset:3px}.body{max-height:180px;overflow:hidden}.body.open{max-height:none}.body>:first-child{margin-top:0}.body h1,.body h2{font-size:17px}.body h3{font-size:15px}img{max-width:100%;height:auto;border-radius:6px}pre{font:12px/1.6 ui-monospace,monospace;overflow:auto;background:#8881;padding:12px;border:1px solid #8882;border-radius:6px}code{font-family:ui-monospace,monospace}table{display:block;overflow:auto}td,th{padding:5px;border:1px solid #8883}blockquote{border-left:3px solid #9674dc66;padding-left:12px;margin-left:0}a{color:#9270da}footer{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid #8882}.review{background:#7452ce;color:#fff;border-color:#7452ce}.review:hover{background:#6745bd}.summary,.progress{font-size:12px;opacity:.75;margin:12px 0 0}.progress:empty{display:none}`;
+    style.textContent = `:host{display:block;color:inherit;color-scheme:light dark}*{box-sizing:border-box}section{font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:20px 16px;border-top:1px solid #8883;overflow-wrap:anywhere}small{font-size:11px;font-weight:600;letter-spacing:.3px;color:#9674dc}h2{font-size:18px;line-height:1.4;letter-spacing:-.25px;margin:8px 0 12px}button{font:500 12px/1.4 system-ui;border:1px solid #8883;border-radius:6px;background:transparent;color:inherit;padding:7px 11px;cursor:pointer}button:hover{background:#8881}button[aria-pressed=true]{background:#9674dc22;border-color:#9674dc;color:#9270da}button:disabled{opacity:.5;cursor:wait}button:focus-visible{outline:2px solid #9674dc;outline-offset:3px}.source{font-size:12px;line-height:1.6;opacity:.75;margin:8px 0 12px}.source ul{list-style:none;margin:0;padding:0}.source li>ul{margin-left:7px;padding-left:16px;border-left:1px solid #8883}.source li{padding:2px 0}.body{max-height:180px;overflow:hidden}.body.open{max-height:none}.body>:first-child{margin-top:0}.body h1,.body h2{font-size:17px}.body h3{font-size:15px}img{max-width:100%;height:auto;border-radius:6px}pre{font:12px/1.6 ui-monospace,monospace;overflow:auto;background:#8881;padding:12px;border:1px solid #8882;border-radius:6px}code{font-family:ui-monospace,monospace}table{display:block;overflow:auto}td,th{padding:5px;border:1px solid #8883}blockquote{border-left:3px solid #9674dc66;padding-left:12px;margin-left:0}a{color:#9270da}footer{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid #8882}.familiarity{width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.familiarity p{width:100%;margin:0 0 4px}.review{background:#7452ce;color:#fff;border-color:#7452ce}.review:hover{background:#6745bd}.summary,.progress{font-size:12px;opacity:.75;margin:12px 0 0}.progress:empty{display:none}textarea{display:block;width:100%;min-height:260px;resize:vertical;padding:12px;font:13px/1.65 ui-monospace,monospace;color:inherit;background:transparent;border:1px solid #8886;border-radius:6px}textarea:focus-visible{outline:2px solid #9674dc}.editor-actions{display:flex;gap:8px;margin-top:8px}[hidden]{display:none!important}`;
     const section = this.document.createElement('section');
     section.setAttribute('aria-label','学习笔记');
-    const label = this.document.createElement('small'); label.textContent = note.roam ? '笔记漫游 · Obsidian' : note.source ? '学习笔记 · Obsidian' : '学习笔记 · 导入副本';
+    const label = this.document.createElement('small'); label.textContent = this.feed.settings.tags ? '标签自选 · Obsidian' : this.feed.settings.roam ? '笔记漫游 · Obsidian' : note.source ? '学习笔记 · Obsidian' : '学习笔记 · 导入副本';
+    const source=this.document.createElement('div');source.className='source';source.setAttribute('aria-label','文章来源');
+    const parts=note.path?.split('/').filter(Boolean)??[];
+    if(parts.length){
+      source.title=note.path!;
+      let parent:HTMLElement=source;
+      for(const [index,part] of parts.entries()){
+        const list=this.document.createElement('ul');const item=this.document.createElement('li');
+        const name=this.document.createElement('span');name.textContent=part;
+        const icon=this.document.createElement('span');icon.setAttribute('aria-hidden','true');icon.textContent=index===parts.length-1?'📄 ':'📁 ';
+        item.append(icon,name);list.append(item);parent.append(list);parent=item;
+      }
+    }else source.textContent=note.source?'未提供文件路径':'导入副本 · 未提供原始路径';
     const title = this.document.createElement('h2'); title.textContent = note.title;
-    const body = this.document.createElement('div'); body.className = 'body'; body.innerHTML = clean(note.html);
+    const body = this.document.createElement('div'); body.className = 'body';
+    const queued=this.feed.pending?.find(op=>op.noteId===note.id && op.type==='edit' && op.status==='pending');
+    body.innerHTML = queued?.markdown!==undefined?render(queued.markdown,true):clean(note.html);
     const footer = this.document.createElement('footer');
     const toggle = this.document.createElement('button'); toggle.type = 'button';
     const applyExpanded = () => { const open = this.expanded.has(anchor); body.classList.toggle('open',open); toggle.textContent = open ? '收起' : '展开'; toggle.setAttribute('aria-expanded',String(open)); };
@@ -76,28 +112,105 @@ export class Timeline {
     host.addEventListener('click',e => e.stopPropagation());
     host.addEventListener('keydown',e => e.stopPropagation());
     footer.append(toggle);
+    if(note.source && this.change){
+      const open=this.document.createElement('button');open.type='button';open.textContent='在 Obsidian 中打开';open.title='打开原文编辑，修改后自动同步到浏览器';
+      const status=this.document.createElement('p');status.className='progress';status.setAttribute('role','status');
+      open.addEventListener('click',async()=>{
+        open.disabled=true;
+        try{const response=await this.change!('open',note.id);status.textContent=response.error??'已在 Obsidian 中打开，编辑后会自动同步。';}
+        catch(error){status.textContent=(error as Error).message;}
+        finally{open.disabled=false;}
+      });footer.append(open);section.append(status);
+      const edit=this.document.createElement('button');edit.type='button';edit.textContent='现场编辑';
+      const editor=this.document.createElement('div');editor.hidden=true;
+      const caption=this.document.createElement('p');caption.textContent='编辑 Markdown 正文 · 保存后自动同步到 Obsidian';
+      const input=this.document.createElement('textarea');input.setAttribute('aria-label','编辑 Markdown 正文');
+      const actions=this.document.createElement('div');actions.className='editor-actions';
+      const save=this.document.createElement('button');save.type='button';save.textContent='保存并同步';
+      const cancel=this.document.createElement('button');cancel.type='button';cancel.textContent='取消';
+      actions.append(save,cancel);editor.append(caption,input,actions);section.append(editor);footer.append(edit);
+      const displayEditor=()=>{input.value=this.drafts.get(note.id)!.markdown;editor.hidden=false;body.hidden=true;footer.querySelectorAll('button').forEach(button=>button.disabled=true);this.editing.add(note.id);};
+      input.addEventListener('input',()=>{this.drafts.get(note.id)!.markdown=input.value;});
+      const closeEditor=()=>{this.editing.delete(note.id);this.drafts.delete(note.id);editor.hidden=true;body.hidden=false;footer.querySelectorAll('button').forEach(button=>button.disabled=false);this.reconcile();};
+      edit.addEventListener('click',async()=>{
+        edit.disabled=true;
+        try{
+          if(!this.drafts.has(note.id)){
+            const response=await this.change!('document',note.id);
+            if(response.error)throw new Error(response.error);
+            if(typeof response.markdown!=='string' || !response.version)throw new Error('无法读取原始正文，请更新 Obsidian 插件');
+            this.drafts.set(note.id,{markdown:response.markdown,version:response.version});
+          }
+          displayEditor();input.focus();status.textContent='';
+        }catch(error){status.textContent=(error as Error).message;edit.disabled=false;}
+      });
+      cancel.addEventListener('click',closeEditor);
+      save.addEventListener('click',async()=>{
+        save.disabled=true;cancel.disabled=true;
+        try{
+          const draft=this.drafts.get(note.id)!;
+          const response=await this.change!('edit',note.id,undefined,{markdown:draft.markdown,expectedVersion:draft.version});
+          if(response.error)throw new Error(response.error);
+          body.innerHTML=render(draft.markdown,true);closeEditor();status.textContent='草稿已保存在本地，将自动同步到 Obsidian。';
+        }catch(error){status.textContent=(error as Error).message;}
+        finally{save.disabled=false;cancel.disabled=false;}
+      });
+      if(this.editing.has(note.id) && this.drafts.has(note.id))displayEditor();
+    }
+    if(this.change){
+      const like=this.document.createElement('button');like.type='button';like.textContent='点赞';like.title='提高展示优先级；再次点击取消';
+      const dislike=this.document.createElement('button');dislike.type='button';dislike.textContent='点踩';dislike.title='降低展示优先级；再次点击取消';
+      const status=this.document.createElement('p');status.className='progress';status.setAttribute('role','status');
+      const selected=()=>{like.setAttribute('aria-pressed',String(note.feedback===1));dislike.setAttribute('aria-pressed',String(note.feedback===-1));};
+      selected();
+      const vote=async(type:'like'|'dislike')=>{
+        like.disabled=true;dislike.disabled=true;
+        try{
+          const response=await this.change!(type,note.id);
+          if(response.error){status.textContent=response.error;return;}
+          const value=type==='like'?1:-1;
+          note.feedback=response.feedback??(note.feedback===value?0:value);selected();
+          status.textContent=note.feedback===1?'已点赞，会更优先出现。':note.feedback===-1?'已点踩，会降低展示优先级。':'已取消反馈，恢复默认权重。';
+        }catch(error){status.textContent=(error as Error).message;}
+        finally{like.disabled=false;dislike.disabled=false;}
+      };
+      like.addEventListener('click',()=>{void vote('like');});dislike.addEventListener('click',()=>{void vote('dislike');});
+      footer.append(like,dislike);section.append(status);
+    }
     if(note.metadata && this.change){
       const metadata=note.metadata;
-      const summary=this.document.createElement('p');summary.className='summary';summary.textContent=`已复习 ${metadata.reviewCount} 次${metadata.lastReviewed ? ` · ${new Date(metadata.lastReviewed).toLocaleString()}` : ''}`;
+      const summary=this.document.createElement('p');summary.className='summary';summary.textContent=`已复习 ${metadata.reviewCount} 次${metadata.rating?` · ${ratings.find(r=>r.value===metadata.rating)?.label}`:''}${metadata.nextReview?` · 下次 ${new Date(metadata.nextReview).toLocaleString()}`:metadata.lastReviewed ? ` · ${new Date(metadata.lastReviewed).toLocaleString()}` : ''}`;
       const progress=this.document.createElement('p');progress.className='progress';progress.setAttribute('role','status');
       const waiting=this.feed.pending?.filter(op=>op.noteId===note.id)??[];
       progress.textContent=waiting.length ? waiting.some(op=>op.status!=='pending')?'Obsidian 中的数据已变化，点扩展图标查看这次修改。':'已记在本地，将自动保存到 Obsidian。' : '';
       const review=this.document.createElement('button');review.type='button';review.className='review';review.textContent='已复习 +1';
       const archive=this.document.createElement('button');archive.type='button';archive.textContent='归档';archive.title='添加 #no-x-feed，在所有模式中排除这篇文章';
-      const submit=async(type:'review'|'archive')=>{
-        review.disabled=true;archive.disabled=true;
+      const familiarity=this.document.createElement('div');familiarity.className='familiarity';familiarity.setAttribute('role','group');familiarity.setAttribute('aria-label','熟悉度');
+      const caption=this.document.createElement('p');caption.className='summary';caption.textContent='熟悉度 · 选择后自动复习，并安排下次推送';familiarity.append(caption);
+      const ratingButtons:HTMLButtonElement[]=[];
+      const submit=async(type:'review'|'archive',rating?:Rating)=>{
+        review.disabled=true;archive.disabled=true;ratingButtons.forEach(b=>b.disabled=true);
         try{
-          const response=await this.change!(type,note.id);progress.textContent=response.error??'已记录，正在自动保存…';
+          const response=await this.change!(type,note.id,rating);progress.textContent=response.error??'已记录，正在自动保存…';
           if(type==='archive' && !response.error){this.assignments.delete(anchor);host.remove();}
+          if(rating!==undefined && !response.error){
+            note.metadata=response.metadata??reviewMetadata(note.metadata!,new Date().toISOString(),rating);
+            this.used.delete(note.id);this.assignments.delete(anchor);host.remove();
+          }
         }
         catch(error){progress.textContent=(error as Error).message;}
-        finally{review.disabled=false;archive.disabled=false;}
+        finally{review.disabled=false;archive.disabled=false;ratingButtons.forEach(b=>b.disabled=false);}
       };
+      for(const rating of ratings){
+        const button=this.document.createElement('button');button.type='button';button.textContent=rating.label;
+        button.title=`下次复习：${new Date(reviewMetadata(metadata,new Date().toISOString(),rating.value).nextReview!).toLocaleString()}`;
+        button.addEventListener('click',()=>{void submit('review',rating.value);});ratingButtons.push(button);familiarity.append(button);
+      }
       review.addEventListener('click',()=>{void submit('review');});
       archive.addEventListener('click',()=>{void submit('archive');});
-      footer.append(review,archive);section.append(summary,progress);
+      footer.append(review,archive,familiarity);section.append(summary,progress);
     }
-    section.prepend(label,title,body);section.append(footer);shadow.append(style,section);
+    section.prepend(label,source,title,body);section.append(footer);shadow.append(style,section);
     return host;
   }
 }

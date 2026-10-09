@@ -2,11 +2,16 @@
 <section><form id="settings">
   <label class="row"><span>在 X 首页显示笔记</span><input id="enabled" type="checkbox" role="switch"></label>
   <label class="row"><span>插入频率</span><span>每 <input id="every" type="number" min="1" max="100" value="10" required aria-label="每隔多少条推文插入笔记"> 条推文</span></label>
+  <label class="row"><span>时间权重</span><input id="time-weight" type="checkbox" role="switch" checked aria-describedby="time-hint"></label>
+  <p id="time-hint" class="hint">默认开启，越久没复习的文章越优先，与点赞权重叠加。未到复习时间的文章暂不推送。</p>
   <label class="row"><span>笔记漫游</span><input id="roam" type="checkbox" role="switch"></label>
-  <p class="hint">开启后随机浏览整个笔记库；关闭后只读 #x-feed 文章。</p>
+  <p class="hint">开启后随机浏览整个笔记库。</p>
+  <label class="row"><span>标签自选</span><input id="tag-mode" type="checkbox" role="switch"></label>
+  <label class="tag-field" for="tags">推送标签<input id="tags" type="text" value="x-feed" placeholder="学习, 游戏开发" maxlength="2020" required disabled aria-describedby="tag-hint"></label>
+  <p id="tag-hint" class="hint">多个标签用逗号或空格分隔，命中任意一个即可。支持中文和层级标签，如 学习/编程。关闭标签自选和漫游后，只读 #x-feed 文章；#no-x-feed 始终排除。</p>
 </form></section>
 <section><div class="section-title"><h2>来自 Obsidian</h2><span id="note-count" class="badge">—</span></div>
-  <p class="hint">给文章加 <code>#x-feed</code>，它就会出现在信息流中。</p><ul id="notes"></ul>
+  <p id="selection-info" class="hint">给文章加 <code>#x-feed</code>，它就会出现在信息流中。</p><ul id="notes"></ul>
 </section>
 <section id="issues" hidden><h2>有修改尚未保存</h2><p class="hint">Obsidian 中的数据有变化。你的修改保留在下面，可以查看后按最新数据重新编辑。</p><ul id="pending"></ul></section>
 <footer><p id="sync-info" role="status">正在读取…</p><p class="hint">点“已复习”即自动保存。Obsidian 关闭时先记在本地，打开后自动写回。</p>

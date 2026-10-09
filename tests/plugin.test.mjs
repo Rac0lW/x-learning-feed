@@ -9,7 +9,7 @@ import * as yaml from 'js-yaml';
 import { indexedDB } from 'fake-indexeddb';
 const require=createRequire(import.meta.url);
 const token=randomBytes(32).toString('hex');const source=randomBytes(32).toString('hex');
-class TFile {constructor(path,content){this.path=path;this.basename=path.slice(0,-3);this.content=content;this.stat={size:Buffer.byteLength(content),mtime:1};}}
+class TFile {constructor(path,content){this.path=path;this.basename=path.slice(0,-3);this.extension='md';this.content=content;this.stat={size:Buffer.byteLength(content),mtime:1};}}
 const info=content=>{const match=content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);return{exists:!!match,frontmatter:match?.[1]??'',contentStart:match?.[0].length??0};};
 
 test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲突与端口释放',async t=>{
@@ -20,23 +20,32 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   const untagged=new TFile('普通文章.md','# 不加入\n');
   const codeTag=new TFile('代码示例.md','```\n#x-feed\n```\n');
   const files=[tagged,inline,untagged,codeTag];
-  class Plugin {async loadData(){return{token,source,port};}async saveData(data){this.saved=data;}addSettingTab(){} }
+  class Plugin {async loadData(){return{token,source,port};}async saveData(data){this.saved=data;}addSettingTab(){}addCommand(){throw new Error('评分入口只放在 X');}addRibbonIcon(){throw new Error('评分入口只放在 X');} }
   class PluginSettingTab {constructor(app,plugin){this.app=app;}}
   const api={Plugin,PluginSettingTab,Setting:class{},Notice:class{},TFile,getFrontMatterInfo:info,parseYaml:text=>yaml.load(text||'{}'),stringifyYaml:value=>yaml.dump(JSON.parse(JSON.stringify(value))),
     getAllTags:cache=>cache.tags};
   const module={exports:{}};
-  runInNewContext(await readFile('.output/obsidian-plugin/main.js','utf8'),{module,exports:module.exports,require:name=>name==='obsidian'?api:require(name),Buffer,console,process,setTimeout,clearTimeout});
+  const nativeFocus={app:0,window:0,restore:0,show:0};
+  const electron={remote:{app:{focus:()=>{nativeFocus.app++;}},getCurrentWindow:()=>({isMinimized:()=>true,restore:()=>{nativeFocus.restore++;},show:()=>{nativeFocus.show++;},focus:()=>{nativeFocus.window++;}})}};
+  runInNewContext(await readFile('.output/obsidian-plugin/main.js','utf8'),{module,exports:module.exports,require:name=>name==='obsidian'?api:name==='electron'?electron:require(name),Buffer,console,process,setTimeout,clearTimeout});
   const plugin=new module.exports.default();let ready;
-  let reads=0;let missingTagIndex;
-  plugin.app={workspace:{onLayoutReady:fn=>{ready=fn;}},vault:{getMarkdownFiles:()=>files,read:async f=>{reads++;return f.content;},process:async(f,fn)=>{f.content=fn(f.content);f.stat.size=Buffer.byteLength(f.content);f.stat.mtime++;return f.content;}},metadataCache:{getFileCache:f=>f===missingTagIndex?null:({tags:[...(yaml.load(info(f.content).frontmatter||'{}')?.tags??[]).map(tag=>`#${tag}`),...(f.content.includes('#x-feed')?['#x-feed']:[])]})}};
+  let reads=0;let missingTagIndex;let active=tagged;const opened=[];
+  plugin.app={workspace:{onLayoutReady:fn=>{ready=fn;},getActiveFile:()=>active,getLeaf:()=>({openFile:async(file,options)=>{active=file;opened.push({file,options});}})},vault:{getMarkdownFiles:()=>files,read:async f=>{reads++;return f.content;},process:async(f,fn)=>{f.content=fn(f.content);f.stat.size=Buffer.byteLength(f.content);f.stat.mtime++;return f.content;}},metadataCache:{getFileCache:f=>f===missingTagIndex?null:({tags:[...(yaml.load(info(f.content).frontmatter||'{}')?.tags??[]).map(tag=>`#${tag}`),...(f.content.match(/#[\p{L}\p{N}_/-]+/gu)??[])]})}};
   await plugin.onload();assert.ok(ready);await plugin.start();t.after(()=>plugin.onunload());
   const url=`http://127.0.0.1:${port}`;const headers={Authorization:`Bearer ${token}`};
   const snapshot=async()=>{const r=await fetch(`${url}/feed`,{headers});assert.equal(r.status,200);return r.json();};
   const post=op=>fetch(`${url}/metadata`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(op)});
+  const open=body=>fetch(`${url}/open`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(body)});
   assert.equal((await fetch(`${url}/feed`)).status,403);
   assert.equal((await fetch(`${url}/feed`,{headers:{...headers,Origin:'https://x.com'}})).status,403);
   const first=await snapshot();assert.equal(first.notes.length,2);assert.equal(first.source,source);
   const note=first.notes.find(n=>n.title==='学习文章');assert.ok(note);assert.equal(note.metadata.reviewCount,0);
+  assert.equal(first.reviewScheduling,true);assert.equal(first.openInObsidian,true);
+  assert.equal((await open({source,noteId:note.id,path:'任意文件.md'})).status,400);
+  assert.equal((await open({source:'a'.repeat(64),noteId:note.id})).status,409);
+  assert.equal((await open({source,noteId:'a'.repeat(64)})).status,409);
+  assert.equal((await open({source,noteId:note.id})).status,200);assert.equal(opened.at(-1).file,tagged);assert.equal(opened.at(-1).options.state.mode,'source');
+  assert.deepEqual(nativeFocus,{app:1,window:1,restore:1,show:1},'Opening from X must restore and activate the native Obsidian window');
   const originalUntagged=untagged.content;
   const roaming=async()=>{const r=await fetch(`${url}/feed?roam=1`,{headers});assert.equal(r.status,200);return r.json();};
   const all=await roaming();assert.equal(all.notes.length,4);assert.equal(all.roam,true);
@@ -68,9 +77,21 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   const storage={token,port};
   const chrome={runtime:{id:'test',getURL:p=>`chrome-extension://test${p}`,onMessage:{addListener:fn=>{handler=fn;}}},action:{onClicked:{addListener:()=>{}}},alarms:{create:()=>{},onAlarm:{addListener:()=>{}}},storage:{local:{get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,storage[k]])),set:async values=>Object.assign(storage,values)}}};
   const network=async(url,options)=>{if(offline)throw new Error('offline');if(options?.method==='POST' && holdWrite)await holdWrite();const reply=await fetch(url,options);if(loseReply && options?.method==='POST'){loseReply=false;throw new Error('response lost after write');}return reply;};
-  runInNewContext(await readFile('.output/chrome-mv3/background.js','utf8'),{chrome,indexedDB,fetch:network,AbortSignal,console,crypto:webcrypto});
+  runInNewContext(await readFile('.output/chrome-mv3/background.js','utf8'),{chrome,indexedDB,fetch:network,AbortSignal,TextEncoder,console,crypto:webcrypto});
   const sender={id:'test',url:'chrome-extension://test/options.html'};const contentSender={id:'test',url:'https://x.com/home'};
   assert.ok((await handler({type:'sync'},sender)).ok);
+  assert.equal((await handler({type:'feed'},contentSender)).settings.timeWeight,true);
+  assert.ok((await handler({type:'settings',settings:{every:1,enabled:true,timeWeight:'yes'}},sender)).error);
+  assert.ok((await handler({type:'like',noteId:'invalid'},contentSender)).error);
+  assert.ok((await handler({type:'like',noteId:note.id},{id:'test',url:'https://evil.example/'})).error);
+  offline=true;
+  assert.equal((await handler({type:'like',noteId:note.id},contentSender)).feedback,1);
+  assert.equal((await handler({type:'dislike',noteId:note.id},contentSender)).feedback,-1);
+  assert.equal((await handler({type:'dislike',noteId:note.id},contentSender)).feedback,0);
+  assert.equal((await handler({type:'like',noteId:note.id},contentSender)).feedback,1);
+  assert.equal((await handler({type:'feed'},contentSender)).notes.find(n=>n.id===note.id).feedback,1);
+  offline=false;assert.ok((await handler({type:'sync'},sender)).ok);
+  assert.equal((await handler({type:'feed'},contentSender)).notes.find(n=>n.id===note.id).feedback,1);
   offline=true;assert.ok((await handler({type:'review',noteId:note.id},contentSender)).ok);
   await new Promise(resolve=>setTimeout(resolve,30));
   assert.equal((await handler({type:'feed'},contentSender)).pending.length,1);
@@ -118,6 +139,7 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   assert.ok((await handler({type:'sync'},sender)).ok);
   assert.ok(!(await handler({type:'feed'},contentSender)).notes.some(n=>n.id===note.id));
   const inlineNote=(await snapshot()).notes.find(n=>n.title==='内联标签');
+  assert.equal((await handler({type:'like',noteId:inlineNote.id},contentSender)).feedback,1);
   const originalInlineBody=info(inline.content).contentStart;
   const inlineBody=inline.content.slice(originalInlineBody);
   offline=true;
@@ -127,8 +149,9 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   assert.ok(!local.notes.some(n=>n.id===inlineNote.id));
   assert.equal(local.pending[0].type,'archive');const archiveOperation=local.pending[0];
   // A new background context must still hide the persisted offline archive.
-  runInNewContext(await readFile('.output/chrome-mv3/background.js','utf8'),{chrome,indexedDB,fetch:network,AbortSignal,console,crypto:webcrypto});
+  runInNewContext(await readFile('.output/chrome-mv3/background.js','utf8'),{chrome,indexedDB,fetch:network,AbortSignal,TextEncoder,console,crypto:webcrypto});
   assert.ok(!(await handler({type:'feed'},contentSender)).notes.some(n=>n.id===inlineNote.id));
+  assert.equal((await handler({type:'like',noteId:inlineNote.id},contentSender)).feedback,0,'Feedback survives background restart');
   offline=false;loseReply=true;
   assert.ok((await handler({type:'sync'},sender)).error);
   assert.equal(yaml.load(info(inline.content).frontmatter).tags.filter(tag=>tag==='no-x-feed').length,1);
@@ -164,6 +187,101 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   blocked.content=blocked.content.replace(', no-x-feed','');blocked.stat.mtime++;
   assert.ok((await snapshot()).notes.some(n=>n.title==='排除标签'),'Removing the exclusion tag restores eligibility');
   assert.ok((await roaming()).notes.some(n=>n.title==='排除标签'));
+  const custom=new TFile('自选/编程.md','---\ntags: [学习/编程]\n---\n# 自选正文\n');
+  const customInline=new TFile('自选/内联.md','#游戏开发\n');
+  const customCode=new TFile('自选/代码.md','```\n#游戏开发\n```\n');
+  const customPrefix=new TFile('自选/相似标签.md','#游戏开发教程\n');
+  const customExcluded=new TFile('自选/排除.md','---\ntags: [游戏开发, no-x-feed]\n---\n正文\n');
+  files.push(custom,customInline,customCode,customPrefix,customExcluded);
+  const customBody=custom.content;
+  const selection={every:1,enabled:true,roam:false,timeWeight:false,tags:['学习/编程','游戏开发']};
+  for(const tags of [[],['bad tag'],['#学习'],Array(21).fill('学习')])assert.ok((await handler({type:'settings',settings:{...selection,tags}},sender)).error);
+  assert.ok((await handler({type:'settings',settings:{...selection,roam:true}},sender)).error);
+  assert.ok((await handler({type:'settings',settings:selection},sender)).ok);
+  for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(local.notes.length===3)break;await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.deepEqual(local.notes.map(n=>n.path).sort(),['改名.md',custom.path,customInline.path].sort());
+  assert.equal(custom.content,customBody,'Selecting tags must not modify notes');
+  const customNote=local.notes.find(n=>n.path===custom.path);
+  assert.deepEqual(Array.from(customNote.tags),['学习/编程']);
+  assert.ok((await handler({type:'review',noteId:customNote.id},contentSender)).ok);
+  for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(!local.pending.length)break;await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.equal(local.notes.find(n=>n.id===customNote.id).metadata.reviewCount,1);
+  assert.ok(custom.content.endsWith('# 自选正文\n'));
+  assert.ok((await handler({type:'review',noteId:customNote.id,rating:0},contentSender)).error);
+  assert.equal((await post({id:randomUUID(),source,noteId:customNote.id,type:'review',reviewedAt:new Date().toISOString(),rating:5,roam:true})).status,400);
+  offline=true;const rated=await handler({type:'review',noteId:customNote.id,rating:3},contentSender);assert.equal(rated.metadata.rating,3);
+  await new Promise(resolve=>setTimeout(resolve,30));local=await handler({type:'feed'},contentSender);
+  const gradedOperation=local.pending.find(op=>op.rating===3);assert.ok(gradedOperation);assert.equal(local.notes.find(n=>n.id===customNote.id).metadata.reviewCount,2);assert.ok(Date.parse(local.notes.find(n=>n.id===customNote.id).metadata.nextReview)>Date.now());
+  runInNewContext(await readFile('.output/chrome-mv3/background.js','utf8'),{chrome,indexedDB,fetch:network,AbortSignal,TextEncoder,console,crypto:webcrypto});
+  assert.equal((await handler({type:'feed'},contentSender)).notes.find(n=>n.id===customNote.id).metadata.rating,3);
+  offline=false;assert.ok((await handler({type:'sync'},sender)).ok);
+  const {status:gradeStatus,error:gradeError,sequence:gradeSequence,...replayGrade}=gradedOperation;assert.equal((await post(replayGrade)).status,200);assert.equal((await post(replayGrade)).status,200);
+  assert.equal(yaml.load(info(custom.content).frontmatter).xfeed_review_count,2);
+  assert.equal((await post({...replayGrade,id:randomUUID(),reviewedAt:new Date().toISOString(),rating:4})).status,200);assert.ok((await handler({type:'sync'},sender)).ok);
+  local=await handler({type:'feed'},contentSender);assert.equal(local.notes.find(n=>n.id===customNote.id).metadata.rating,4);assert.equal(local.notes.find(n=>n.id===customNote.id).metadata.intervalDays,9);
+  assert.ok((await handler({type:'open',noteId:customNote.id},contentSender)).ok);assert.equal(opened.at(-1).file,custom);
+  assert.ok((await handler({type:'open',noteId:customNote.id},{id:'test',url:'https://evil.example/'})).error);
+  custom.content+='\n同步编辑测试\n';custom.stat.mtime++;custom.stat.size=Buffer.byteLength(custom.content);
+  assert.ok((await handler({type:'sync'},sender)).ok);local=await handler({type:'feed'},contentSender);
+  assert.ok(local.notes.find(n=>n.id===customNote.id).html.includes('同步编辑测试'));
+  const documentRequest=body=>fetch(`${url}/document`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  assert.equal((await documentRequest({source,noteId:customNote.id,roam:true,path:'arbitrary.md'})).status,400);
+  const doc=await handler({type:'document',noteId:customNote.id},contentSender);assert.equal(doc.markdown,custom.content.slice(info(custom.content).contentStart));assert.match(doc.version,/^[a-f0-9]{64}$/);
+  assert.ok((await handler({type:'edit',noteId:customNote.id,markdown:'无效',expectedVersion:'bad'},contentSender)).error);
+  const preserved=custom.content.slice(0,info(custom.content).contentStart);
+  const edited=doc.markdown+'\n**现场编辑**\n';
+  offline=true;assert.ok((await handler({type:'edit',noteId:customNote.id,markdown:edited,expectedVersion:doc.version},contentSender)).ok);
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(custom.content.slice(info(custom.content).contentStart),doc.markdown,'Offline editing must not change the vault');
+  runInNewContext(await readFile('.output/chrome-mv3/background.js','utf8'),{chrome,indexedDB,fetch:network,AbortSignal,TextEncoder,console,crypto:webcrypto});
+  local=await handler({type:'feed'},contentSender);const editOperation=local.pending.find(op=>op.type==='edit');assert.equal(editOperation.markdown,edited);
+  assert.equal((await handler({type:'document',noteId:customNote.id},contentSender)).markdown,edited,'Persisted drafts can reopen offline');
+  offline=false;loseReply=true;assert.ok((await handler({type:'sync'},sender)).error);
+  assert.equal(custom.content,preserved+edited,'Saving body must preserve the exact frontmatter');
+  assert.ok((await handler({type:'sync'},sender)).ok);assert.equal((await handler({type:'feed'},contentSender)).pending.length,0,'Lost edit responses must retry safely');
+  const conflictDoc=await handler({type:'document',noteId:customNote.id},contentSender);
+  custom.content+='\nObsidian 的新修改\n';custom.stat.mtime++;custom.stat.size=Buffer.byteLength(custom.content);
+  const latestContent=custom.content;
+  assert.ok((await handler({type:'edit',noteId:customNote.id,markdown:'冲突草稿',expectedVersion:conflictDoc.version},contentSender)).ok);
+  for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(local.pending[0]?.status==='conflict')break;await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.equal(local.pending[0].status,'conflict');assert.equal(local.pending[0].markdown,'冲突草稿');assert.equal(custom.content,latestContent,'Conflicts must never overwrite the latest Obsidian text');
+  assert.ok((await handler({type:'discard',id:local.pending[0].id},sender)).ok);
+  const limitDoc=await handler({type:'document',noteId:customNote.id},contentSender);
+  assert.equal((await post({id:randomUUID(),source,noteId:customNote.id,type:'edit',roam:true,expectedVersion:limitDoc.version,markdown:'中'.repeat(750000)})).status,413);
+  assert.equal(custom.content,latestContent);
+  const inlineId=local.notes.find(n=>n.path===customInline.path).id;
+  offline=true;assert.ok((await handler({type:'archive',noteId:inlineId},contentSender)).ok);
+  await new Promise(resolve=>setTimeout(resolve,30));assert.ok(!(await handler({type:'feed'},contentSender)).notes.some(n=>n.id===inlineId));
+  assert.ok((await handler({type:'settings',settings:{...selection,tags:['学习/编程']}},sender)).ok);
+  offline=false;assert.ok((await handler({type:'sync'},sender)).ok);
+  local=await handler({type:'feed'},contentSender);assert.equal(local.notes.length,1);assert.equal(local.notes[0].id,customNote.id);assert.equal(local.pending.length,0);
+  assert.ok(yaml.load(info(customInline.content).frontmatter).tags.includes('no-x-feed'),'Queued archives still write after changing selected tags');
+  runInNewContext(await readFile('.output/chrome-mv3/background.js','utf8'),{chrome,indexedDB,fetch:network,AbortSignal,TextEncoder,console,crypto:webcrypto});
+  local=await handler({type:'feed'},contentSender);assert.deepEqual(Array.from(local.settings.tags),['学习/编程']);assert.equal(local.notes.length,1);
+  assert.equal(local.settings.timeWeight,false,'Time-weight choice survives background restart');
+  assert.ok((await handler({type:'settings',settings:{every:1,enabled:true,roam:false}},sender)).ok);
+  for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(local.notes.some(n=>!n.roam))break;await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.ok(local.notes.length>0);assert.ok(local.notes.every(n=>!n.roam));assert.ok(!local.notes.some(n=>n.id===customNote.id));
+  const oldBridge=async(...args)=>{
+    const reply=await network(...args);
+    if(String(args[0]).endsWith('/feed?roam=1')){const feed=await reply.json();delete feed.tagSelection;return{ok:reply.ok,json:async()=>feed};}
+    return reply;
+  };
+  runInNewContext(await readFile('.output/chrome-mv3/background.js','utf8'),{chrome,indexedDB,fetch:oldBridge,AbortSignal,TextEncoder,console,crypto:webcrypto});
+  await handler({type:'settings',settings:selection},sender);
+  assert.ok((await handler({type:'sync'},sender)).error.includes('请更新插件'),'Old plugins must report missing tag-selection support');
+  assert.equal((await handler({type:'feed'},contentSender)).notes.length,0,'An unsupported bridge must not push the full vault');
+  const modeNote=new TFile('模式切换.md','#x-feed\n原文\n');files.push(modeNote);
+  const pathIdentity=(await roaming()).notes.find(n=>n.path===modeNote.path).id;
+  modeNote.content+='变更\n';modeNote.stat.mtime++;modeNote.stat.size=Buffer.byteLength(modeNote.content);
+  assert.equal((await snapshot()).notes.find(n=>n.path===modeNote.path).id,pathIdentity,'Switching to tagged mode must retain a previously seen path identity');
+  assert.equal((await post({id:randomUUID(),source,noteId:pathIdentity,type:'review',roam:true,reviewedAt:new Date().toISOString()})).status,200,'Queued actions must still resolve after switching modes');
+  missingTagIndex=custom;
+  assert.deepEqual((await roaming()).notes.find(n=>n.path===custom.path).tags,['学习/编程'],'Property tags must survive a missing metadata cache');
+  missingTagIndex=customInline;
+  customInline.content='#游戏开发\n```\n#不是标签\n```\n';customInline.stat.mtime++;customInline.stat.size=Buffer.byteLength(customInline.content);
+  assert.deepEqual((await roaming()).notes.find(n=>n.path===customInline.path).tags,['游戏开发'],'Inline tags must survive a missing metadata cache and exclude code');
+  missingTagIndex=undefined;
   plugin.onunload();await new Promise(resolve=>setTimeout(resolve,20));
   await assert.rejects(fetch(`${url}/feed`,{headers}));
 });

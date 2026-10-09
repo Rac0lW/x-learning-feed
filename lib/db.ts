@@ -2,14 +2,23 @@ import type { Note, Pending } from './types.js';
 let database: Promise<IDBDatabase> | undefined;
 function db() {
   return database ??= new Promise<IDBDatabase>((resolve,reject) => {
-    const request = indexedDB.open('x-learning-feed',2);
+    const request = indexedDB.open('x-learning-feed',3);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains('notes')) request.result.createObjectStore('notes',{keyPath:'id'});
+      if (!request.result.objectStoreNames.contains('feedback')) request.result.createObjectStore('feedback',{keyPath:'noteId'});
       if (!request.result.objectStoreNames.contains('outbox')) request.result.createObjectStore('outbox',{keyPath:'sequence',autoIncrement:true}).createIndex('id','id',{unique:true});
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => { database = undefined; reject(request.error); };
   });
+}
+export async function readFeedback(): Promise<{noteId:string; value:-1|0|1}[]> {
+  const database=await db();
+  return new Promise((resolve,reject)=>{const request=database.transaction('feedback').objectStore('feedback').getAll();request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+}
+export async function saveFeedback(noteId:string,value:-1|0|1) {
+  const database=await db();
+  return new Promise<void>((resolve,reject)=>{const tx=database.transaction('feedback','readwrite');const store=tx.objectStore('feedback');if(value===0)store.delete(noteId);else store.put({noteId,value});tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);});
 }
 export async function saveNotes(notes: Note[]) {
   const database = await db();
@@ -24,6 +33,14 @@ export async function readNotes(): Promise<Note[]> {
   return new Promise((resolve,reject) => {
     const request = database.transaction('notes').objectStore('notes').getAll();
     request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+  });
+}
+export async function readState():Promise<{notes:Note[];pending:Pending[]}> {
+  const database=await db();
+  return new Promise((resolve,reject)=>{
+    const tx=database.transaction(['notes','outbox']);
+    const notes=tx.objectStore('notes').getAll();const outbox=tx.objectStore('outbox').getAll();
+    tx.oncomplete=()=>resolve({notes:notes.result,pending:outbox.result});tx.onerror=tx.onabort=()=>reject(tx.error);
   });
 }
 export async function replaceSource(source:string,notes:Note[]) {

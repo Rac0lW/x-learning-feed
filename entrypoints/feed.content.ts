@@ -4,7 +4,7 @@ import { Timeline } from '../lib/timeline';
 export default defineContentScript({
   matches: ['https://x.com/*'],
   main(ctx) {
-    const timeline = new Timeline(document,(type,noteId)=>browser.runtime.sendMessage({type,noteId}));
+    const timeline = new Timeline(document,(type,noteId,rating,edit)=>browser.runtime.sendMessage({type,noteId,...edit,...(rating!==undefined?{rating}:{})}));
     let scheduled = false;
     let version: unknown;
     let panel: HTMLElement | undefined;

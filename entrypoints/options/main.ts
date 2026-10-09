@@ -10,7 +10,10 @@ if(window.parent!==window)document.addEventListener('keydown',event=>{
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const enabled = element<HTMLInputElement>('enabled');
 const every = element<HTMLInputElement>('every');
+const timeWeight = element<HTMLInputElement>('time-weight');
 const roam = element<HTMLInputElement>('roam');
+const tagMode = element<HTMLInputElement>('tag-mode');
+const tags = element<HTMLInputElement>('tags');
 const token = element<HTMLInputElement>('token');
 const port = element<HTMLInputElement>('port');
 function status(text: string) { element('status').textContent = text; }
@@ -23,12 +26,17 @@ async function refresh() {
   const feed: Feed = await send({type:'feed'});
   if(document.activeElement!==enabled)enabled.checked = feed.settings.enabled;
   if(document.activeElement!==every)every.value = String(feed.settings.every);
+  if(document.activeElement!==timeWeight)timeWeight.checked=feed.settings.timeWeight!==false;
   if(document.activeElement!==roam)roam.checked=feed.settings.roam===true;
+  if(document.activeElement!==tagMode)tagMode.checked=feed.settings.tags!==undefined;
+  if(document.activeElement!==tags)tags.value=feed.settings.tags?.join(', ')??'x-feed';
+  tags.disabled=!tagMode.checked;
+  element('selection-info').textContent=feed.settings.tags?`推送带 ${feed.settings.tags.map(tag=>`#${tag}`).join('、')} 中任意一个标签的文章。`:feed.settings.roam?'从整个笔记库随机选文。':'给文章加 #x-feed，它就会出现在信息流中。';
   element('note-count').textContent = `${feed.notes.length} 篇`;
   element('notes').replaceChildren(...feed.notes.map(note => {
     const li = document.createElement('li');
     const title = document.createElement('span'); title.textContent = note.title;
-    const count = document.createElement('small'); count.textContent = `复习 ${note.metadata?.reviewCount??0} 次`;
+    const count = document.createElement('small'); count.textContent = note.metadata?.nextReview && Date.parse(note.metadata.nextReview)>Date.now()?'待到期':`复习 ${note.metadata?.reviewCount??0} 次`;
     li.append(title,count); return li;
   }));
   if(!feed.notes.length)element('notes').textContent=feed.settings.roam?'正在读取笔记库，暂时没有可漫游的文章。':'还没有文章。连接 Obsidian 后，给一篇笔记加上标签试试。';
@@ -40,8 +48,9 @@ async function refresh() {
     const reason=document.createElement('p');reason.textContent=item.error??'这次修改无法写回';
     li.append(title,reason);
     if(item.metadata){const draft=document.createElement('p');draft.textContent=`你的修改：${item.metadata.reviewCount} 次；时间 ${item.metadata.lastReviewed?new Date(item.metadata.lastReviewed).toLocaleString():'无'}；备注 ${item.metadata.remarks||'无'}`;li.append(draft);}
-    const discard=document.createElement('button');discard.type='button';discard.className='secondary';discard.textContent='保留 Obsidian 当前数据';
+    const discard=document.createElement('button');discard.type='button';discard.className='secondary';discard.textContent=item.type==='edit'?'放弃草稿，保留 Obsidian 当前数据':'保留 Obsidian 当前数据';
     discard.addEventListener('click',async()=>{try{await send({type:'discard',id:item.id});await refresh();status('已保留 Obsidian 中的数据。需要调整时，请在 Obsidian 中修改属性。');}catch(error){status((error as Error).message);}});
+    if(item.type==='edit'){const draft=document.createElement('textarea');draft.readOnly=true;draft.value=item.markdown??'';draft.setAttribute('aria-label','保留的正文草稿');draft.style.cssText='width:100%;min-height:160px;';li.append(draft);}
     li.append(discard);return li;
   }));
   const state=await browser.storage.local.get(['token','syncStatus','lastSync']);
@@ -51,9 +60,14 @@ async function refresh() {
   element('sync-info').dataset.state=state.token && !offline ? 'connected' : 'offline';
 }
 const settings=element<HTMLFormElement>('settings');
-settings.addEventListener('change',async()=>{
+settings.addEventListener('change',async event=>{
+  if(event.target===roam && roam.checked)tagMode.checked=false;
+  if(event.target===tagMode && tagMode.checked)roam.checked=false;
+  tags.disabled=!tagMode.checked;
   if(!every.reportValidity())return;
-  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),roam:roam.checked}});status('设置已保存。');}
+  if(tagMode.checked && !tags.reportValidity())return;
+  const selected=[...new Set(tags.value.split(/[\s,，]+/).map(tag=>tag.replace(/^#/,'')).filter(Boolean))];
+  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),roam:roam.checked,timeWeight:timeWeight.checked,...(tagMode.checked?{tags:selected}:{})}});status('设置已保存。');}
   catch(error){status((error as Error).message);}
 });
 settings.addEventListener('submit',event=>event.preventDefault());
