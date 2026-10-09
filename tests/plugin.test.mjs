@@ -134,16 +134,11 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   }
   assert.equal(local.pending.length,0,'Both clicks must write automatically, without a manual sync or alarm');
   assert.equal((await snapshot()).notes.find(n=>n.id===note.id).metadata.reviewCount,11);
+  // Note roaming was removed; a leftover roam flag from an older panel must not pull in the whole vault.
   assert.ok((await handler({type:'settings',settings:{every:1,enabled:true,roam:true}},sender)).ok);
-  for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(local.notes.length===4)break;await new Promise(resolve=>setTimeout(resolve,10));}
-  assert.equal(local.notes.length,4);assert.ok(local.notes.every(n=>n.roam));
-  assert.ok((await handler({type:'review',noteId:wandered.id},contentSender)).ok);
-  for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(!local.pending.length)break;await new Promise(resolve=>setTimeout(resolve,10));}
-  assert.equal(local.pending.length,0);assert.equal(local.notes.find(n=>n.id===wandered.id).metadata.reviewCount,2);
-  assert.ok((await handler({type:'settings',settings:{every:1,enabled:true,roam:false}},sender)).ok);
-  for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(local.notes.length===2)break;await new Promise(resolve=>setTimeout(resolve,10));}
-  assert.equal(local.notes.length,2);assert.ok(!local.notes.some(n=>n.id===wandered.id));
-  assert.ok((await handler({type:'settings',settings:{every:1,enabled:true,roam:'yes'}},sender)).error);
+  assert.equal((await chrome.storage.local.get('settings')).settings.roam,undefined);
+  for(let i=0;i<20;i++){local=await handler({type:'feed'},contentSender);await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.equal(local.notes.length,2);assert.ok(!local.notes.some(n=>n.roam || n.id===wandered.id));
   tagged.content=tagged.content.replace('- x-feed\n','');
   tagged.stat.mtime++;
   assert.equal((await snapshot()).notes.length,1);
@@ -183,7 +178,7 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   const roamingArchive={id:randomUUID(),noteId:wandered.id,source,type:'archive',roam:true};
   assert.equal((await post({...roamingArchive,tags:['arbitrary-tag']})).status,400);
   assert.equal((await post(roamingArchive)).status,200);assert.equal((await post(roamingArchive)).status,200);
-  assert.equal(yaml.load(info(untagged.content).frontmatter).xfeed_review_count,2);
+  assert.equal(yaml.load(info(untagged.content).frontmatter).xfeed_review_count,1);
   assert.ok(untagged.content.endsWith(originalUntagged));
   assert.ok(!(await roaming()).notes.some(n=>n.id===wandered.id));
   const blocked=new TFile('排除标签.md','---\ntags: [x-feed, no-x-feed]\n---\n# 排除正文\n');
@@ -206,9 +201,8 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   const customExcluded=new TFile('自选/排除.md','---\ntags: [游戏开发, no-x-feed]\n---\n正文\n');
   files.push(custom,customInline,customCode,customPrefix,customExcluded);
   const customBody=custom.content;
-  const selection={every:1,enabled:true,roam:false,timeWeight:false,tags:['学习/编程','游戏开发']};
+  const selection={every:1,enabled:true,timeWeight:false,tags:['学习/编程','游戏开发']};
   for(const tags of [[],['bad tag'],['#学习'],Array(21).fill('学习')])assert.ok((await handler({type:'settings',settings:{...selection,tags}},sender)).error);
-  assert.ok((await handler({type:'settings',settings:{...selection,roam:true}},sender)).error);
   assert.ok((await handler({type:'settings',settings:selection},sender)).ok);
   for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(local.notes.length===3)break;await new Promise(resolve=>setTimeout(resolve,10));}
   assert.deepEqual(local.notes.map(n=>n.path).sort(),['改名.md',custom.path,customInline.path].sort());

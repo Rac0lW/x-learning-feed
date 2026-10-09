@@ -70,19 +70,16 @@ test('卡片顶部显示来源文件树，支持根目录、未知路径和路�
   }finally{dom.window.Element.prototype.attachShadow=attach;timeline.clear();}
 });
 
-test('漫游随机选文、不重复，切换模式和首次同步无需刷新页面',()=>{
+test('每轮不重复，切换模式和首次同步无需刷新页面',()=>{
   const main=document.querySelector('main');main.replaceChildren(...[1,2,3,4].map(cell));
-  const timeline=new Timeline(document);const random=Math.random;
-  try{
-    Math.random=()=>0.99;
-    timeline.update({notes:[],settings:{every:1,enabled:true,roam:true}});timeline.reconcile();
-    timeline.update({notes:[note('a'),note('b'),note('c')],settings:{every:1,enabled:true,roam:true}});timeline.reconcile();
-    assert.deepEqual([...timeline.assignments.values()],[note('c').id,note('b').id,note('a').id]);
-    timeline.reconcile();assert.equal(document.querySelectorAll('x-learning-card').length,3);
-    timeline.update({notes:[note('a')],settings:{every:1,enabled:true,roam:false}});timeline.reconcile();
-    assert.deepEqual([...timeline.assignments.values()],[note('a').id]);
-    assert.equal(document.querySelectorAll('x-learning-card').length,1);
-  }finally{Math.random=random;}
+  const timeline=new Timeline(document);
+  timeline.update({notes:[],settings:{every:1,enabled:true}});timeline.reconcile();
+  timeline.update({notes:[note('a'),note('b'),note('c')],settings:{every:1,enabled:true}});timeline.reconcile();
+  assert.deepEqual([...timeline.assignments.values()],[note('a').id,note('b').id,note('c').id]);
+  timeline.reconcile();assert.equal(document.querySelectorAll('x-learning-card').length,3);
+  timeline.update({notes:[note('a')],settings:{every:1,enabled:true,tags:['学习']}});timeline.reconcile();
+  assert.deepEqual([...timeline.assignments.values()],[note('a').id]);
+  assert.equal(document.querySelectorAll('x-learning-card').length,1);timeline.clear();
 });
 
 test('切换自选标签重新分配文章，同一篇仍可进入新标签列表',()=>{
@@ -97,7 +94,7 @@ test('切换自选标签重新分配文章，同一篇仍可进入新标签列�
 test('今天已推送的文章刷新后不再推送，并通知记录新推送的文章',()=>{
   const main=document.querySelector('main');main.replaceChildren(cell(1),cell(2),cell(3));
   const recorded=[];const timeline=new Timeline(document,undefined,id=>recorded.push(id));
-  timeline.update({notes:[note('a'),note('b')],settings:{every:1,enabled:true,roam:true},shown:[note('a').id]});timeline.reconcile();
+  timeline.update({notes:[note('a'),note('b')],settings:{every:1,enabled:true},shown:[note('a').id]});timeline.reconcile();
   assert.equal(timeline.assignments.get('1'),note('b').id);assert.equal(timeline.assignments.size,1,'A note shown earlier today stays hidden even after the round is used up');
   assert.deepEqual(recorded,[note('b').id]);
   timeline.update({notes:[note('a'),note('b')],settings:{every:1,enabled:true,tags:['学习']},shown:[note('a').id,note('b').id]});timeline.reconcile();
@@ -128,15 +125,14 @@ test('Obsidian 更新熟悉度后，当前卡片移除，到期可重新推送',
   }finally{Date.now=now;timeline.clear();}
 });
 
-test('默认时间权重影响标签顺序和漫游概率，关闭后去除时间加权',()=>{
-  const main=document.querySelector('main');const now=Date.now;const random=Math.random;const start=now();Date.now=()=>start;
+test('默认时间权重影响推送顺序，关闭后去除时间加权',()=>{
+  const main=document.querySelector('main');const now=Date.now;const start=now();Date.now=()=>start;
   const base={reviewCount:1,remarks:'',version:'a'.repeat(64)};
   const notes=[{...note('a'),metadata:{...base,lastReviewed:new Date(start).toISOString()}},{...note('b'),metadata:{...base,lastReviewed:new Date(start-28*86400000).toISOString()}}];
   const select=settings=>{main.replaceChildren(cell(1));const timeline=new Timeline(document);timeline.update({notes,settings:{every:1,enabled:true,...settings}});timeline.reconcile();const id=timeline.assignments.get('1');timeline.clear();return id;};
   try{
     assert.equal(select({}),note('b').id);assert.equal(select({timeWeight:false}),note('a').id);
-    Math.random=()=>0.4;assert.equal(select({roam:true}),note('b').id);assert.equal(select({roam:true,timeWeight:false}),note('a').id);
-  }finally{Date.now=now;Math.random=random;}
+  }finally{Date.now=now;}
 });
 
 test('IndexedDB 持久保存与重复 ID 覆盖',async () => {
@@ -146,22 +142,12 @@ test('IndexedDB 持久保存与重复 ID 覆盖',async () => {
   assert.equal((await readNotes()).find(n => n.id === note('a').id).title,'更新');
 });
 
-test('反馈调整标签优先级和漫游概率，每轮仍不重复',()=>{
+test('反馈调整推送优先级，每轮仍不重复',()=>{
   const main=document.querySelector('main');
   const notes=[{...note('a'),feedback:-1},note('b'),{...note('c'),feedback:1}];
   main.replaceChildren(...[1,2,3,4].map(cell));
   const ordered=new Timeline(document);ordered.update({notes,settings:{every:1,enabled:true}});ordered.reconcile();
-  assert.deepEqual([...ordered.assignments.values()],[note('c').id,note('b').id,note('a').id]);ordered.clear();
-  const random=Math.random;
-  try{
-    // Weight 0.5 : 1 : 2; this draw selects the liked note, unlike uniform sampling.
-    Math.random=()=>0.5;
-    const roaming=new Timeline(document);roaming.update({notes,settings:{every:1,enabled:true,roam:true}});roaming.reconcile();
-    assert.deepEqual([...roaming.assignments.values()],[note('c').id,note('b').id,note('a').id]);roaming.clear();
-    Math.random=()=>0;
-    const low=new Timeline(document);low.update({notes,settings:{every:1,enabled:true,roam:true}});low.reconcile();
-    assert.equal([...low.assignments.values()][0],note('a').id,'Disliked notes remain eligible');low.clear();
-  }finally{Math.random=random;}
+  assert.deepEqual([...ordered.assignments.values()],[note('c').id,note('b').id,note('a').id],'Disliked notes remain eligible');ordered.clear();
 });
 
 test('反馈独立持久保存，不被来源同步和写回覆盖，取消后恢复默认',async()=>{
@@ -231,27 +217,23 @@ test('现场编辑保留原始 Markdown、刷新不丢草稿，失败可重试�
 });
 
 
-test('字数降权适用于标签推送和漫游，忽略空白、标记和图片，按正文更新重新计算',()=>{
-  const main=document.querySelector('main');const random=Math.random;
+test('字数降权适用于推送顺序，忽略空白、标记和图片，按正文更新重新计算',()=>{
+  const main=document.querySelector('main');
   const long={...note('a'),html:`<p>${'长'.repeat(3000)}</p>`};
   const short={...note('b'),html:`<p>${'短'.repeat(1000)}</p>`};
-  const select=(notes,roam=false)=>{
+  const select=notes=>{
     main.replaceChildren(cell(1));const timeline=new Timeline(document);
-    timeline.update({notes,settings:{every:1,enabled:true,roam,timeWeight:false}});timeline.reconcile();
+    timeline.update({notes,settings:{every:1,enabled:true,timeWeight:false}});timeline.reconcile();
     const id=timeline.assignments.get('1');timeline.clear();return id;
   };
-  try{
-    assert.equal(select([long,short]),short.id);
-    Math.random=()=>0.4;assert.equal(select([long,short],true),short.id,'Length must also affect roaming probability');
-    Math.random=()=>0;assert.equal(select([long,short],true),long.id,'Long articles remain eligible');
-    const decorated={...note('a'),html:`<p><strong>中&amp;文&#x1F600;</strong>${' \n&nbsp;'.repeat(1000)}<img src="data:image/png;base64,${'a'.repeat(9000)}"></p>`};
-    const plain={...note('b'),html:'<p>中文ABCDE</p>'};
-    assert.equal(select([plain,decorated]),decorated.id,'Count decoded non-whitespace text, excluding markup and image data');
-    main.replaceChildren(cell(1));const timeline=new Timeline(document);
-    timeline.update({notes:[long,short],settings:{every:1,enabled:true,timeWeight:false}});timeline.reconcile();
-    assert.equal(timeline.assignments.get('1'),short.id);
-    const changed={...long,html:'<p>缩短</p>'};
-    timeline.update({notes:[changed,short],settings:{every:1,enabled:true,timeWeight:false}});main.append(cell(2));timeline.used.clear();timeline.reconcile();
-    assert.equal(timeline.assignments.get('2'),long.id);timeline.clear();
-  }finally{Math.random=random;}
+  assert.equal(select([long,short]),short.id);
+  const decorated={...note('a'),html:`<p><strong>中&amp;文&#x1F600;</strong>${' \n&nbsp;'.repeat(1000)}<img src="data:image/png;base64,${'a'.repeat(9000)}"></p>`};
+  const plain={...note('b'),html:'<p>中文ABCDE</p>'};
+  assert.equal(select([plain,decorated]),decorated.id,'Count decoded non-whitespace text, excluding markup and image data');
+  main.replaceChildren(cell(1));const timeline=new Timeline(document);
+  timeline.update({notes:[long,short],settings:{every:1,enabled:true,timeWeight:false}});timeline.reconcile();
+  assert.equal(timeline.assignments.get('1'),short.id);
+  const changed={...long,html:'<p>缩短</p>'};
+  timeline.update({notes:[changed,short],settings:{every:1,enabled:true,timeWeight:false}});main.append(cell(2));timeline.used.clear();timeline.reconcile();
+  assert.equal(timeline.assignments.get('2'),long.id);timeline.clear();
 });

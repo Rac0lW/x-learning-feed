@@ -18,7 +18,6 @@ const element = <T extends HTMLElement>(id: string) => document.getElementById(i
 const enabled = element<HTMLInputElement>('enabled');
 const every = element<HTMLInputElement>('every');
 const timeWeight = element<HTMLInputElement>('time-weight');
-const roam = element<HTMLInputElement>('roam');
 const tagMode = element<HTMLInputElement>('tag-mode');
 const tags = element<HTMLInputElement>('tags');
 const token = element<HTMLInputElement>('token');
@@ -36,11 +35,10 @@ async function refresh() {
   if(document.activeElement!==enabled)enabled.checked = feed.settings.enabled;
   if(document.activeElement!==every)every.value = String(feed.settings.every);
   if(document.activeElement!==timeWeight)timeWeight.checked=feed.settings.timeWeight!==false;
-  if(document.activeElement!==roam)roam.checked=feed.settings.roam===true;
   if(document.activeElement!==tagMode)tagMode.checked=feed.settings.tags!==undefined;
   if(document.activeElement!==tags)tags.value=feed.settings.tags?.join(', ')??'x-feed';
   tags.disabled=!tagMode.checked;
-  element('selection-info').textContent=feed.settings.tags?t('panel.select.tags',{tags:feed.settings.tags.map(tag=>`#${tag}`).join(t('panel.tagSeparator'))}):t(feed.settings.roam?'panel.select.roam':'panel.select.default');
+  element('selection-info').textContent=feed.settings.tags?t('panel.select.tags',{tags:feed.settings.tags.map(tag=>`#${tag}`).join(t('panel.tagSeparator'))}):t('panel.select.default');
   element('note-count').textContent = t('panel.count',{count:feed.notes.length});
   element('notes').replaceChildren(...feed.notes.map(note => {
     const li = document.createElement('li');
@@ -48,7 +46,7 @@ async function refresh() {
     const count = document.createElement('small'); count.textContent = note.metadata?.nextReview && Date.parse(note.metadata.nextReview)>Date.now()?t('panel.due'):t('panel.reviewCount',{count:note.metadata?.reviewCount??0});
     li.append(title,count); return li;
   }));
-  if(!feed.notes.length)element('notes').textContent=t(feed.settings.roam?'panel.empty.roam':'panel.empty');
+  if(!feed.notes.length)element('notes').textContent=t('panel.empty');
   const issues=(feed.pending??[]).filter(item=>item.status!=='pending');
   element('issues').hidden=!issues.length;
   element('pending').replaceChildren(...issues.map(item=>{
@@ -75,13 +73,11 @@ settings.addEventListener('change',async event=>{
     catch(error){status((error as Error).message);}
     return;
   }
-  if(event.target===roam && roam.checked)tagMode.checked=false;
-  if(event.target===tagMode && tagMode.checked)roam.checked=false;
   tags.disabled=!tagMode.checked;
   if(!every.reportValidity())return;
   if(tagMode.checked && !tags.reportValidity())return;
   const selected=[...new Set(tags.value.split(/[\s,，]+/).map(tag=>tag.replace(/^#/,'')).filter(Boolean))];
-  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),roam:roam.checked,timeWeight:timeWeight.checked,...(tagMode.checked?{tags:selected}:{})}});status(t('panel.settingsSaved'));}
+  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),timeWeight:timeWeight.checked,...(tagMode.checked?{tags:selected}:{})}});status(t('panel.settingsSaved'));}
   catch(error){status((error as Error).message);}
 });
 settings.addEventListener('submit',event=>event.preventDefault());

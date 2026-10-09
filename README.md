@@ -46,7 +46,7 @@ Reload Obsidian and enable X Learning Feed under **Settings → Community plugin
 1. Add `#x-feed` to an Obsidian note, or add `x-feed` to its `tags` property.
 2. Open or refresh `https://x.com/home` and click the X Learning Feed toolbar icon.
 3. In the top-right panel, open Connection settings (`连接设置`), paste the token, keep port `43127`, and click Connect to Obsidian (`连接 Obsidian`).
-4. Scroll through tweets. The panel lets you change the interval, select tags, or enable Vault roaming (`笔记漫游`).
+4. Scroll through tweets. The panel lets you change the interval or select tags.
 
 Run Obsidian and the browser on the same computer. The first sync of a large vault can take time. Cached notes remain available when Obsidian is closed; saved reviews and edits retry when the connection returns.
 
@@ -71,9 +71,9 @@ The extension panel has a **Language** option (Match browser, 中文, English). 
 
 The default mode uses notes tagged `#x-feed`. Custom tag selection (`标签自选`) accepts tags separated by commas or spaces, such as `#learning, gamedev, learning/code`. Notes matching any selected tag are eligible. Both property tags and inline tags match exactly, including nested tags. Text inside code blocks does not count as a tag.
 
-Vault roaming (`笔记漫游`) chooses notes randomly from the entire Markdown vault. Custom tags and roaming are mutually exclusive. Custom tag selection also reads the whole vault and filters locally in the browser. Both modes cache vault articles on this computer. The limit is 10,000 notes, and roaming skips notes larger than 2 MiB.
+Custom tag selection reads the whole vault and filters locally in the browser, so it caches vault articles on this computer. The limit is 10,000 notes, and notes larger than 2 MiB are skipped. Vault roaming (`笔记漫游`) was removed in 0.10.0.
 
-Browsing roaming notes does not add properties in bulk. A review, archive, or saved edit adds the identity needed for writeback. Until then, unmarked notes use an identity derived from their path, so renaming one gives it a new identity. Cards show folders and the filename in a source tree at the top.
+Browsing custom-tag notes does not add properties in bulk. A review, archive, or saved edit adds the identity needed for writeback. Until then, unmarked notes use an identity derived from their path, so renaming one gives it a new identity. Cards show folders and the filename in a source tree at the top.
 
 `#no-x-feed` excludes a note in every mode. Archive (`归档`) adds `no-x-feed` to the original note's `tags` property and immediately removes the card. Existing tags, body text, and review counts are preserved. Offline archives are queued locally. Remove the exclusion tag in Obsidian to make the note eligible again.
 
@@ -100,7 +100,7 @@ Three weights multiply together:
 
 Length counts Unicode characters in the displayed body, excluding whitespace, HTML markup, and image data. A 1,000-character article gets a length multiplier of ½; a 3,000-character article gets ¼. Longer articles retain a positive weight. Turning off Time weight (`时间权重`) keeps feedback and length weighting active.
 
-Tag modes favor higher combined weights; roaming uses weighted random selection. Feedback affects future assignments, while existing cards keep their positions. Click the same Like (`点赞`) or Dislike (`点踩`) button again to cancel. Feedback stays in this browser and is preserved across note syncs; it is not written to Obsidian or shared across browsers. Notes that are not yet due are excluded regardless of weight.
+Notes with higher combined weights are shown first. Feedback affects future assignments, while existing cards keep their positions. Click the same Like (`点赞`) or Dislike (`点踩`) button again to cancel. Feedback stays in this browser and is preserved across note syncs; it is not written to Obsidian or shared across browsers. Notes that are not yet due are excluded regardless of weight.
 
 ## Opening, editing, and syncing
 
@@ -114,7 +114,7 @@ The extension receives Obsidian changes and retries saved operations about every
 
 Only the main column of `/home` is processed. Tweet status IDs prevent duplicate counting. Each note is assigned once per page session; reload to start another session. Graded notes can appear again after their due time. Cards follow X's virtual list cells and use Shadow DOM to isolate layout.
 
-The plugin listens on `127.0.0.1`, requires a token, and rejects ordinary website origins. Notes and queued operations are cached in IndexedDB. Roaming and custom tags can cache the eligible vault locally. Review metadata is saved in the original notes; connection settings stay in the plugin's `data.json`.
+The plugin listens on `127.0.0.1`, requires a token, and rejects ordinary website origins. Notes and queued operations are cached in IndexedDB. Custom tags can cache the eligible vault locally. Review metadata is saved in the original notes; connection settings stay in the plugin's `data.json`.
 
 Cards support headings, paragraphs, lists, links, tables, code blocks, and embedded PNG / JPEG / GIF / WebP images. Only `data:image/...;base64,...` images are retained. Remote images, relative image paths, SVG, scripts, event handlers, embedded pages, and custom styles are removed. Code blocks retain formatting without syntax highlighting; math has no dedicated renderer.
 
