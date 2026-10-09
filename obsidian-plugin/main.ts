@@ -18,7 +18,7 @@ export default class XLearningFeed extends Plugin {
   set state(message:string) {this.status={message};}
   applyLanguage() {setLocale(resolveLocale(this.settings.language??'auto',obsidianLanguage()));}
   private files = new Map<string,TFile>();
-  private cache = new Map<string,{mtime:number;size:number;content:string;note:Note}>();
+  private cache = new Map<string,{mtime:number;size:number;content:string;note:Note;tagKey?:string}>();
   private work:Promise<unknown> = Promise.resolve();
   async onload() {
     const saved = await this.loadData();
@@ -65,7 +65,11 @@ export default class XLearningFeed extends Plugin {
       if(fresh && !archiveId && excluded(cached.content))continue;
       if(fresh && (roam || hasTag(cached.content,'x-feed'))){
         if(files.has(cached.note.id))throw new BridgeError(409,'ob.duplicateId',{name:file.basename});
-        files.set(cached.note.id,file);notes.push({...cached.note,tags:readTags(cached.content,cache?getAllTags(cache)??[]:[]),...(roam?{roam:true}:{})});continue;
+        files.set(cached.note.id,file);
+        // Tags only change with the file or Obsidian's tag index, so reuse them instead of re-parsing every note on each sync.
+        const candidates=cache?getAllTags(cache)??[]:[];const tagKey=candidates.join('\n');
+        if(cached.tagKey!==tagKey){cached.note={...cached.note,tags:readTags(cached.content,candidates)};cached.tagKey=tagKey;}
+        notes.push({...cached.note,...(roam?{roam:true}:{})});continue;
       }
       let content=contents.get(file.path)??await this.app.vault.read(file);
       if (!archiveId && excluded(content) || !roam && !hasTag(content,'x-feed')) continue;
@@ -77,12 +81,21 @@ export default class XLearningFeed extends Plugin {
       if (typeof id!=='string' || !/^[a-f0-9]{64}$/.test(id)) throw new BridgeError(422,'ob.badIdIn',{name:file.basename});
       if (files.has(id)) throw new BridgeError(409,'ob.duplicateIdFix',{name:file.basename});
       files.set(id,file);
-      const note={id,title:file.basename.slice(0,200),html:render(body,'markdown'),source:this.settings.source,path:file.path,metadata:readMetadata(frontmatter),tags:readTags(content,cache?getAllTags(cache)??[]:[])};
-      if(Number.isFinite(file.stat.mtime))this.cache.set(file.path,{mtime:file.stat.mtime,size:file.stat.size,content,note});
+      const candidates=cache?getAllTags(cache)??[]:[];
+      const note={id,title:file.basename.slice(0,200),html:render(body,'markdown'),source:this.settings.source,path:file.path,metadata:readMetadata(frontmatter),tags:readTags(content,candidates)};
+      if(Number.isFinite(file.stat.mtime))this.cache.set(file.path,{mtime:file.stat.mtime,size:file.stat.size,content,note,tagKey:candidates.join('\n')});
       notes.push({...note,...(roam?{roam:true}:{})});
     }
     this.files=files;
     return {source:this.settings.source,notes,roam,tagSelection:true,reviewScheduling:true,openInObsidian:true,inlineEditing:true};
+  }
+  // Opening a note the last scan already found must not wait for a whole-vault rescan or a running sync.
+  private known(noteId:string,roam:boolean) {
+    const file=this.files.get(noteId);if(!file)return undefined;
+    const cached=this.cache.get(file.path);
+    if(!cached || cached.note.id!==noteId || cached.mtime!==file.stat.mtime || cached.size!==file.stat.size || !this.app.vault.getMarkdownFiles().includes(file))return undefined;
+    if(excluded(cached.content) || !roam && !hasTag(cached.content,'x-feed'))return undefined;
+    return file;
   }
   private async handle(req:IncomingMessage,res:ServerResponse) {
     const requested=req.headers['accept-language'];
@@ -100,13 +113,17 @@ export default class XLearningFeed extends Plugin {
       if(req.url==='/open' || req.url==='/document'){
         const parsed=openSchema.safeParse(input);if(!parsed.success)throw new BridgeError(400,'ob.badOpen');
         const op=parsed.data;if(op.source!==this.settings.source)throw new BridgeError(409,'ob.vaultChanged');
-        const document=await this.serialized(async()=>{
-          await this.feed(op.roam===true);const file=this.files.get(op.noteId);if(!file)throw new BridgeError(409,'ob.removed');
+        const serve=async(file:TFile)=>{
           if(req.url==='/document'){const {body}=splitNote(await this.app.vault.read(file));return{markdown:body,version:bodyVersion(body)};}
           await this.app.workspace.getLeaf(false).openFile(file,{active:true,state:{mode:'source'}});
           const remote=require('electron').remote;const window=remote.getCurrentWindow();
           if(window.isMinimized())window.restore();
           window.show();remote.app.focus({steal:true});window.focus();
+        };
+        const file=this.known(op.noteId,op.roam===true);
+        const document=file?await serve(file):await this.serialized(async()=>{
+          await this.feed(op.roam===true);const file=this.files.get(op.noteId);if(!file)throw new BridgeError(409,'ob.removed');
+          return serve(file);
         });
         send(200,document??{opened:op.noteId});return;
       }

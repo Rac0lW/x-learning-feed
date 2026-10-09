@@ -29,20 +29,24 @@ export function splitNote(content:string) {
   if (typeof frontmatter !== 'object' || Array.isArray(frontmatter)) throw new BridgeError(422,'ob.badProperties');
   return {frontmatter:frontmatter as Record<string,unknown>,body:content.slice(info.contentStart)};
 }
-export function hasTag(content:string,tag:string) {
+// Parse the note once, then answer any number of tag questions; the markdown lex is deferred until a tag needs it.
+function tagMatcher(content:string) {
   const {frontmatter,body} = splitNote(content);
   const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags : typeof frontmatter.tags === 'string' ? frontmatter.tags.split(/[\s,]+/) : [];
-  if (tags.some(value => String(value).replace(/^#/,'') === tag)) return true;
-  if(!body.includes(`#${tag}`))return false;
-  let found = false;
-  const escaped=tag.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-  marked.walkTokens(marked.lexer(body), token => {
-    if (token.type === 'text' && new RegExp(`(^|[\\s(])#${escaped}(?![\\p{L}\\p{N}_/\\-])`,'u').test(token.text)) found = true;
-  });
-  return found;
+  const properties = new Set(tags.map(value => String(value).replace(/^#/,'')));
+  let texts:string[]|undefined;
+  return (tag:string) => {
+    if (properties.has(tag)) return true;
+    if(!body.includes(`#${tag}`))return false;
+    if(!texts){const found:string[]=[];marked.walkTokens(marked.lexer(body), token => {if (token.type === 'text') found.push(token.text);});texts=found;}
+    const escaped=tag.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    const pattern=new RegExp(`(^|[\\s(])#${escaped}(?![\\p{L}\\p{N}_/\\-])`,'u');
+    return texts.some(text => pattern.test(text));
+  };
 }
+export function hasTag(content:string,tag:string) {return tagMatcher(content)(tag);}
 export function readTags(content:string,candidates:string[]) {
-  if(candidates.length)return [...new Set(candidates.map(tag=>tag.replace(/^#/,'')))].filter(tag=>hasTag(content,tag));
+  if(candidates.length)return [...new Set(candidates.map(tag=>tag.replace(/^#/,'')))].filter(tagMatcher(content));
   const {frontmatter,body}=splitNote(content);
   const properties=Array.isArray(frontmatter.tags)?frontmatter.tags:typeof frontmatter.tags==='string'?frontmatter.tags.split(/[\s,]+/):[];
   const tags=new Set([...candidates,...properties.map(String)].map(tag=>tag.replace(/^#/,'')));

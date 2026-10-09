@@ -49,6 +49,9 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   assert.equal((await open({source,noteId:'a'.repeat(64)})).status,409);
   assert.equal((await open({source,noteId:note.id})).status,200);assert.equal(opened.at(-1).file,tagged);assert.equal(opened.at(-1).options.state.mode,'source');
   assert.deepEqual(nativeFocus,{app:1,window:1,restore:1,show:1},'Opening from X must restore and activate the native Obsidian window');
+  const tagIndex=plugin.app.metadataCache.getFileCache;plugin.app.metadataCache.getFileCache=()=>{throw new Error('Opening a known note must not rescan the vault');};
+  assert.equal((await open({source,noteId:note.id})).status,200);assert.equal(opened.at(-1).file,tagged);
+  plugin.app.metadataCache.getFileCache=tagIndex;
   const originalUntagged=untagged.content;
   const roaming=async()=>{const r=await fetch(`${url}/feed?roam=1`,{headers});assert.equal(r.status,200);return r.json();};
   const all=await roaming();assert.equal(all.notes.length,4);assert.equal(all.roam,true);
