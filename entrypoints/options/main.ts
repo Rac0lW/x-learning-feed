@@ -24,6 +24,8 @@ const timeWeight = element<HTMLInputElement>('time-weight');
 const tagMode = element<HTMLInputElement>('tag-mode');
 const modes = [...document.querySelectorAll<HTMLInputElement>('input[name=mode]')];
 const tags = element<HTMLInputElement>('tags');
+const folderMode = element<HTMLInputElement>('folder-mode');
+const folders = element<HTMLInputElement>('folders');
 const token = element<HTMLInputElement>('token');
 const port = element<HTMLInputElement>('port');
 const language = element<HTMLSelectElement>('language');
@@ -43,7 +45,10 @@ async function refresh() {
   if(document.activeElement!==tagMode)tagMode.checked=feed.settings.tags!==undefined;
   if(document.activeElement!==tags)tags.value=feed.settings.tags?.join(', ')??'x-feed';
   tags.disabled=!tagMode.checked;
-  element('selection-info').textContent=feed.settings.tags?t('panel.select.tags',{tags:feed.settings.tags.map(tag=>`#${tag}`).join(t('panel.tagSeparator'))}):t('panel.select.default');
+  if(document.activeElement!==folderMode)folderMode.checked=feed.settings.folders!==undefined;
+  if(document.activeElement!==folders)folders.value=feed.settings.folders?.join(', ')??'';
+  folders.disabled=!folderMode.checked;
+  element('selection-info').textContent=[feed.settings.tags&&t('panel.select.tags',{tags:feed.settings.tags.map(tag=>`#${tag}`).join(t('panel.tagSeparator'))}),feed.settings.folders&&t('panel.select.folders',{folders:feed.settings.folders.map(folder=>`${folder}/`).join(t('panel.tagSeparator'))})].filter(Boolean).join(' ')||t('panel.select.default');
   element('note-count').textContent = t('panel.count',{count:feed.notes.length});
   element('notes').replaceChildren(...feed.notes.map(note => {
     const li = document.createElement('li');
@@ -78,11 +83,13 @@ settings.addEventListener('change',async event=>{
     catch(error){status((error as Error).message);}
     return;
   }
-  tags.disabled=!tagMode.checked;
+  tags.disabled=!tagMode.checked;folders.disabled=!folderMode.checked;
   if(!every.reportValidity())return;
   if(tagMode.checked && !tags.reportValidity())return;
+  if(folderMode.checked && !folders.reportValidity())return;
+  const chosenFolders=[...new Set(folders.value.split(/[,，\n]+/).map(folder=>folder.trim().replace(/^\/+|\/+$/g,'')).filter(Boolean))];
   const selected=[...new Set(tags.value.split(/[\s,，]+/).map(tag=>tag.replace(/^#/,'')).filter(Boolean))];
-  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),timeWeight:timeWeight.checked,mode:modes.find(mode=>mode.checked)?.value??'browse',...(tagMode.checked?{tags:selected}:{})}});status(t('panel.settingsSaved'));}
+  try{await send({type:'settings',settings:{enabled:enabled.checked,every:Number(every.value),timeWeight:timeWeight.checked,mode:modes.find(mode=>mode.checked)?.value??'browse',...(tagMode.checked?{tags:selected}:{}),...(folderMode.checked?{folders:chosenFolders}:{})}});status(t('panel.settingsSaved'));}
   catch(error){status((error as Error).message);}
 });
 settings.addEventListener('submit',event=>event.preventDefault());

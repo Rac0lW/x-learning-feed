@@ -12,7 +12,7 @@ The Obsidian plugin and browser extension are the recommended setup. No X API, p
 
 ## Installation
 
-The current version is **0.12.2**. Build from source and install manually. You need desktop Obsidian, Chrome or Edge, and Node.js 22.13 or newer. The browser extension and the Obsidian plugin are available in English and Chinese. By default they follow the browser and Obsidian language; you can switch under Language in the extension panel and in the plugin settings. The steps below also give the Chinese labels.
+The current version is **0.13.0**. Build from source and install manually. You need desktop Obsidian, Chrome or Edge, and Node.js 22.13 or newer. The browser extension and the Obsidian plugin are available in English and Chinese. By default they follow the browser and Obsidian language; you can switch under Language in the extension panel and in the plugin settings. The steps below also give the Chinese labels.
 
 ### 1. Download and build
 

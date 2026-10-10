@@ -1,3 +1,4 @@
+import { selecting, matchesSelection, validFolder } from '../lib/selection';
 import { browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import { readNotes, readState, saveNotes, replaceSource, pending, savePending, acknowledge, readFeedback, saveFeedback } from '../lib/db';
@@ -45,13 +46,13 @@ export default defineBackground(() => {
       if(!config.token)throw new Error(t('bg.connectFirst'));
       const url=`http://127.0.0.1:${config.port??43127}`;
       const headers={Authorization:`Bearer ${config.token}`,'Accept-Language':await applyLocale()};
-      const selected=(config.settings as Settings|undefined)?.tags;
+      const selectedTags=(config.settings as Settings|undefined)?.tags;
       // ponytail: 标签自选复用全库缓存；超过 10,000 篇时改为插件端按标签读取。
-      const roam=selected!==undefined;
+      const roam=selecting(config.settings as Settings|undefined);
       const response=await fetch(`${url}/feed${roam?'?roam=1':''}`,{headers,signal:AbortSignal.timeout(roam?60000:10000)});
       if(!response.ok){let reason='';try{reason=(await response.json()).error??'';}catch{}throw new Error(t('bg.syncFailed',{status:response.status,reason}));}
       const feed=await response.json();
-      if(selected && feed.tagSelection!==true)throw new Error(t('bg.needTags'));
+      if(selectedTags && feed.tagSelection!==true)throw new Error(t('bg.needTags'));
       if(roam && feed.roam!==true)throw new Error(t('bg.needTags'));
       if((await pending()).some(op=>op.rating!==undefined) && feed.reviewScheduling!==true)throw new Error(t('bg.needScheduling'));
       if(!Array.isArray(feed.notes) || feed.notes.length>10000 || !feed.notes.every(validNote) || new Set(feed.notes.map((n:Note)=>n.id)).size!==feed.notes.length)throw new Error(t('bg.invalidNotes'));
@@ -173,7 +174,19 @@ export default defineBackground(() => {
           const snapshot=await readState();const outbox=snapshot.pending;const archived=new Set(outbox.filter(op=>op.type==='archive').map(op=>op.noteId));
           const feedback=new Map((await readFeedback()).map(item=>[item.noteId,item.value]));
           const s=settings as Settings|undefined;
-          return{notes:snapshot.notes.filter(n=>!archived.has(n.id) && (peer ? n.source===peer : !n.source) && !!n.roam===(s?.tags!==undefined) && (!s?.tags || s.tags.some(tag=>n.tags?.includes(tag)))).map(n=>({...withPendingReviews(n,outbox),feedback:feedback.get(n.id)??0})),settings:{timeWeight:true,...(settings??{every:10,enabled:true})},version,pending:outbox,locale,shown:await shownToday()};
+          return{notes:snapshot.notes.filter(n=>!archived.has(n.id) && (peer ? n.source===peer : !n.source) && !!n.roam===selecting(s) && (!selecting(s) || matchesSelection(n,s))).map(n=>({...withPendingReviews(n,outbox),feedback:feedback.get(n.id)??0})),settings:{timeWeight:true,...(settings??{every:10,enabled:true})},version,pending:outbox,locale,shown:await shownToday()};
+        }
+        if(message.type==='folder'){
+          // Read-only listing of cached notes directly inside one folder; '' is the vault root.
+          const raw=message.path??'';
+          const folder=typeof raw==='string'?raw.replace(/^\/+|\/+$/g,''):null;
+          if(folder===null || folder.length>4096 || folder.split('/').some(part=>part==='..' || part==='.'))throw new Error(t('bg.badFolder'));
+          const {peer}=await browser.storage.local.get('peer');
+          const snapshot=await readState();const archived=new Set(snapshot.pending.filter(op=>op.type==='archive').map(op=>op.noteId));
+          const files=snapshot.notes.filter(n=>n.path!==undefined && !archived.has(n.id) && (peer ? n.source===peer : !n.source) && n.path.slice(0,Math.max(n.path.lastIndexOf('/'),0))===folder)
+            .map(n=>({id:n.id,title:n.title,path:n.path!,name:n.path!.slice(n.path!.lastIndexOf('/')+1)}))
+            .sort((a,b)=>a.name.localeCompare(b.name));
+          return{path:folder,files};
         }
         if(message.type==='shown' || message.type==='review' || message.type==='metadata' || message.type==='archive' || message.type==='like' || message.type==='dislike' || message.type==='open' || message.type==='document' || message.type==='edit' || message.type==='mode'){
           const next=queuing.then(()=>queue(message,sender));queuing=next.catch(()=>{});return await next;
@@ -194,10 +207,12 @@ export default defineBackground(() => {
           if(!s || !Number.isInteger(s.every) || s.every<1 || s.every>100 || typeof s.enabled!=='boolean')throw new Error(t('bg.invalidSettings'));
           if(s.timeWeight!==undefined && typeof s.timeWeight!=='boolean')throw new Error(t('bg.badTimeWeight'));
           if(s.mode!==undefined && !isMode(s.mode))throw new Error(t('bg.badMode'));
+          if(s.folders!==undefined && (!Array.isArray(s.folders) || s.folders.length<1 || s.folders.length>20 || !s.folders.every(validFolder)))throw new Error(t('bg.badFolders'));
           if(s.tags!==undefined && (!Array.isArray(s.tags) || s.tags.length<1 || s.tags.length>20 || !s.tags.every(tag=>typeof tag==='string' && tag.length<=100 && /^[\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*$/u.test(tag))))throw new Error(t('bg.badTags'));
           const previous=await browser.storage.local.get('settings');
           await browser.storage.local.set({settings:s});await bump();
-          if(JSON.stringify(s.tags)!==JSON.stringify((previous.settings as Settings|undefined)?.tags)){
+          const before=previous.settings as Settings|undefined;
+          if(JSON.stringify(s.tags)!==JSON.stringify(before?.tags) || JSON.stringify(s.folders)!==JSON.stringify(before?.folders)){
             if(syncing)void syncing.catch(()=>{}).then(()=>sync()).catch(()=>{});
             else void sync().catch(()=>{});
           }

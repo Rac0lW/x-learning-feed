@@ -212,6 +212,11 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(local.notes.length===3)break;await new Promise(resolve=>setTimeout(resolve,10));}
   assert.deepEqual(local.notes.map(n=>n.path).sort(),['改名.md',custom.path,customInline.path].sort());
   assert.equal(custom.content,customBody,'Selecting tags must not modify notes');
+  const folder=await handler({type:'folder',path:'/自选/'},contentSender);
+  assert.equal(folder.path,'自选');assert.ok(folder.files.length>=2&&folder.files.every(f=>f.path.startsWith('自选/')&&!f.name.includes('/')&&!('html' in f)));
+  assert.ok(folder.files.some(f=>f.name==='编程.md')&&!folder.files.some(f=>f.name==='排除.md'),'Folder listing hides excluded notes');
+  assert.ok((await handler({type:'folder',path:'..'},contentSender)).error);assert.ok((await handler({type:'folder',path:5},contentSender)).error);
+  assert.ok((await handler({type:'folder'},contentSender)).files.every(f=>!f.path.includes('/')),'Root listing has no nested files');
   const customNote=local.notes.find(n=>n.path===custom.path);
   assert.deepEqual(Array.from(customNote.tags),['学习/编程']);
   assert.ok((await handler({type:'review',noteId:customNote.id},contentSender)).ok);
@@ -263,6 +268,12 @@ test('Obsidian 插件：标签、稳定身份、原子元数据、去重、冲�
   const inlineId=local.notes.find(n=>n.path===customInline.path).id;
   offline=true;assert.ok((await handler({type:'archive',noteId:inlineId},contentSender)).ok);
   await new Promise(resolve=>setTimeout(resolve,30));assert.ok(!(await handler({type:'feed'},contentSender)).notes.some(n=>n.id===inlineId));
+  for(const folders of [[],[''],['..'],['自选//x'],['/自选'],Array(21).fill('自选'),'自选'])assert.ok((await handler({type:'settings',settings:{every:1,enabled:true,folders}},sender)).error,JSON.stringify(folders));
+  assert.ok((await handler({type:'settings',settings:{every:1,enabled:true,timeWeight:false,folders:['自选']}},sender)).ok);
+  for(let i=0;i<100;i++){local=await handler({type:'feed'},contentSender);if(local.notes.length&&local.notes.every(n=>n.path.startsWith('自选/')))break;await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.ok(local.notes.length>0&&local.notes.every(n=>n.path.startsWith('自选/')&&!n.path.endsWith('排除.md')),'Folder choice shows only notes inside the folder');
+  assert.ok(!local.notes.some(n=>n.id===inlineId),'Archived notes stay hidden in folder choice');
+  assert.deepEqual(Array.from(local.settings.folders),['自选']);
   assert.ok((await handler({type:'settings',settings:{...selection,tags:['学习/编程']}},sender)).ok);
   offline=false;assert.ok((await handler({type:'sync'},sender)).ok);
   local=await handler({type:'feed'},contentSender);assert.equal(local.notes.length,1);assert.equal(local.notes[0].id,customNote.id);assert.equal(local.pending.length,0);

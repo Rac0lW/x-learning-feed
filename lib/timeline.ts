@@ -1,3 +1,4 @@
+import { selecting, inFolder } from './selection.js';
 import { clean, render } from './render.js';
 import type { Feed, Note, Rating, Metadata, Mode } from './types.js';
 import { ratings, reviewMetadata, noteWeight } from './review.js';
@@ -35,7 +36,7 @@ export class Timeline {
   constructor(private document: Document, private change?:(type:'review'|'archive'|'like'|'dislike'|'open'|'document'|'edit'|'mode',noteId:string,rating?:Rating,extra?:{markdown:string;expectedVersion:string}|{mode:Mode})=>Promise<{error?:string;feedback?:-1|0|1;metadata?:Metadata;markdown?:string;version?:string}>,private shown?:(noteId:string)=>void) {}
   clear() { this.document.querySelectorAll('x-learning-card').forEach(n => n.remove()); }
   update(feed: Feed) {
-    const modeChanged=JSON.stringify(feed.settings.tags)!==JSON.stringify(this.feed.settings.tags);
+    const modeChanged=JSON.stringify([feed.settings.tags,feed.settings.folders])!==JSON.stringify([this.feed.settings.tags,this.feed.settings.folders]);
     if(modeChanged){this.used.clear();this.expanded.clear();}
     if(feed.locale)setLocale(feed.locale);
     if (feed.settings.every !== this.feed.settings.every || modeChanged || !this.feed.notes.length && feed.notes.length>0) {
@@ -109,7 +110,7 @@ textarea{display:block;width:100%;min-height:260px;resize:vertical;padding:12px;
 [hidden]{display:none!important}`;
     const section = this.document.createElement('section');
     section.setAttribute('aria-label',t('card.aria'));
-    const label = this.document.createElement('small'); label.textContent = t(this.feed.settings.tags ? 'card.label.tags' : note.source ? 'card.label.note' : 'card.label.imported');
+    const label = this.document.createElement('small'); label.textContent = t(selecting(this.feed.settings) ? 'card.label.tags' : note.source ? 'card.label.note' : 'card.label.imported');
     const source=this.document.createElement('div');source.className='source';source.setAttribute('aria-label',t('card.source'));
     const parts=note.path?.split('/').filter(Boolean)??[];
     if(parts.length){
@@ -130,7 +131,8 @@ textarea{display:block;width:100%;min-height:260px;resize:vertical;padding:12px;
     if(mode){
       section.dataset.mode=mode;
       const tag=this.feed.settings.tags?.find(tag=>note.tags?.includes(tag));
-      label.textContent=`${t(`card.mode.${mode}`)} · ${tag?`#${tag}`:'Obsidian'}`;
+      const folder=tag?undefined:this.feed.settings.folders?.find(folder=>inFolder(note.path,folder));
+      label.textContent=`${t(`card.mode.${mode}`)} · ${tag?`#${tag}`:folder?`${folder}/`:'Obsidian'}`;
     }
     const footer = this.document.createElement('footer');
     // Secondary actions are collected here and follow each mode's main buttons.

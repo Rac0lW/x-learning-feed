@@ -12,6 +12,6 @@ export type Operation = {
   roam?:boolean;
 };
 export type Pending = Operation & { status: 'pending' | 'conflict' | 'failed'; error?: string; sequence?:number };
-export type Settings = { every: number; enabled: boolean; tags?:string[]; timeWeight?:boolean; mode?:Mode };
+export type Settings = { every: number; enabled: boolean; tags?:string[]; folders?:string[]; timeWeight?:boolean; mode?:Mode };
 // shown: IDs of notes already pushed on X today, so a page refresh doesn't push them again.
 export type Feed = { notes: Note[]; settings: Settings; pending?: Pending[]; locale?: Locale; shown?: string[] };
